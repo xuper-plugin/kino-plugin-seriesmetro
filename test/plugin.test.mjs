@@ -99,6 +99,14 @@ test("a movie finds its page by title, plays Latino on Fastream and keeps the ot
   assert.ok(a.alternatives.every((x) => !x.url && x.ref.length <= 512));
 });
 
+test("every request carries a browser User-Agent (Fastream answers okhttp's with 403), beside the source's own headers", async () => {
+  serveMovie("coco");
+  await plugin.resolve("m:354912");
+  assert.ok(calls.length >= 4);
+  for (const c of calls) assert.match(c.opts.headers["User-Agent"], /^Mozilla\/5\.0 .*Chrome/, c.url);
+  assert.ok(calls.filter((c) => c.url.includes("trembed")).every((c) => c.opts.headers.Referer === SITE + "/"));
+});
+
 test("the page's tab labels give server and language; an embed address is read from each trembed page", async () => {
   serveMovie("coco");
   await plugin.resolve("m:354912");
