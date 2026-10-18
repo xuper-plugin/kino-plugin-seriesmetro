@@ -1,0 +1,79 @@
+{
+  "id": "seriesmetro",
+  "name": "SeriesMetro",
+  "version": "1.0.0",
+  "apiVersion": 9,
+  "entry": "plugin.js",
+  "icon": "icon.png",
+  "description": "Películas y series en latino, castellano o subtituladas, a través de SeriesMetro.",
+  "author": "xuper-plugin",
+  "homepage": "https://github.com/xuper-plugin/kino-plugin-seriesmetro",
+  "hosts": [
+    "www3.seriesmetro.net",
+    "fastream.to"
+  ],
+  "streamHosts": "any",
+  "capabilities": [
+    "search",
+    "home",
+    "browse",
+    "episodes",
+    "resolve",
+    "download"
+  ],
+  "categories": [
+    "movies",
+    "series"
+  ],
+  "color": "#00ACC1",
+  "theme": {
+    "accent": "#29C5EE",
+    "onAccent": "#06141A",
+    "background": "#070E10",
+    "surface": "#10202A",
+    "highlight": "#80DEEA"
+  },
+  "telemetry": true,
+  "settings": [
+    {
+      "key": "language",
+      "label": "Idioma preferido",
+      "labelEn": "Preferred language",
+      "type": "select",
+      "default": "lat",
+      "options": [
+        {
+          "value": "lat",
+          "label": "Latino",
+          "labelEn": "Latin American"
+        },
+        {
+          "value": "esp",
+          "label": "Castellano",
+          "labelEn": "Castilian"
+        },
+        {
+          "value": "sub",
+          "label": "Subtitulado",
+          "labelEn": "Subtitled"
+        }
+      ]
+    },
+    {
+      "key": "cacheSection",
+      "label": "Caché",
+      "labelEn": "Cache",
+      "type": "section",
+      "hint": "Los nombres y años de cada título se guardan 7 días.",
+      "hintEn": "Each title's names and years are kept for 7 days."
+    },
+    {
+      "key": "clearCache",
+      "label": "Vaciar caché",
+      "labelEn": "Clear cache",
+      "type": "action",
+      "confirm": "¿Vaciar la caché de títulos?",
+      "confirmEn": "Clear the title cache?"
+    }
+  ]
+}
