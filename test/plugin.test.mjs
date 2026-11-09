@@ -15,6 +15,7 @@ let logs = [];
 let store = new Map();
 globalThis.kino = {
   lang: "es",
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   config: { get: (k) => config[k] },
   fetch: async (url, opts = {}) => {
     calls.push({ url, opts });
