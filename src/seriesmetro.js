@@ -1,6 +1,5 @@
 // SeriesMetro: movies and series. /pelicula|serie/<slug>/; a series season list is an admin-ajax POST, an episode is its own
 // page; every option is an iframe (?trembed=N) wrapping a player, its language in the option's label ("Fastream -Latino").
-import { extractorFor } from "./extractors/index.js";
 import { normLang } from "./util/lang.js";
 import { slugify } from "./util/slug.js";
 
@@ -139,10 +138,15 @@ async function episodeHit(title, req) {
 }
 
 /**
- * The copies of a movie or an episode this plugin can open: `{ lang: "lat"|"esp"|"sub", server, embedUrl }` for every option on
- * a host an extractor knows. [title] is `{ kind: "movie"|"tv", titles: {esMX, esES, original, en}, year, lastYear, season,
+ * The copies of a movie or an episode: `{ lang: "lat"|"esp"|"sub", server, embedUrl }` for every option the page lists (the shared
+ * kino-resolver opens them, whatever the host; `server` is the host's first label, "fastream" for fastream.to). [title] is `{ kind: "movie"|"tv", titles: {esMX, esES, original, en}, year, lastYear, season,
  * episode }`. Empty when the site has no such page.
  */
+/** A copy's server name, from its host: the first label, letters only ("fastream.to" -> "fastream"); "" for a bad address. */
+export function serverOf(url) {
+  try { return new URL(url).hostname.replace(/^www./, "").split(".")[0].toLowerCase().replace(/[^a-z]/g, "").slice(0, 30); } catch (_) { return ""; }
+}
+
 export async function listCopies(title, { req }) {
   const tv = title.kind === "tv";
   if (tv && (title.season == null || title.episode == null)) return [];
@@ -157,8 +161,8 @@ export async function listCopies(title, { req }) {
   const out = [];
   for (const row of await embedRows(page, req)) {
     const lang = normLang(row.lang);
-    const known = lang ? extractorFor(row.url) : null;
-    if (known && !out.some((c) => c.embedUrl === row.url)) out.push({ lang, server: known.name, embedUrl: row.url });
+    const server = serverOf(row.url);
+    if (lang && server && !out.some((c) => c.embedUrl === row.url)) out.push({ lang, server, embedUrl: row.url });
   }
   return out;
 }

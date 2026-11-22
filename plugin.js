@@ -1,130 +1,3 @@
-var __defProp = Object.defineProperty;
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
-};
-
-// src/extractors/fastream.js
-var fastream_exports = {};
-__export(fastream_exports, {
-  HOSTS: () => HOSTS,
-  extract: () => extract
-});
-
-// src/util/unpack.js
-var ALPHA = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-var toNum = (s, radix) => [...s].reduce((n, ch) => n * radix + ALPHA.indexOf(ch), 0);
-function unpack(source) {
-  const m = /}\s*\(\s*'((?:\\'|[^'])*)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'((?:\\'|[^'])*)'\.split\('\|'\)/.exec(source || "");
-  if (!m) return null;
-  const payload = m[1].replace(/\\'/g, "'");
-  const radix = Number(m[2]);
-  const keys = m[4].split("|");
-  if (radix < 2 || radix > 62) return null;
-  return payload.replace(/\b[0-9a-zA-Z]+\b/g, (w) => {
-    const i = toNum(w, radix);
-    return Number.isInteger(i) && i >= 0 && keys[i] ? keys[i] : w;
-  });
-}
-
-// src/extractors/shared.js
-var HLS_MIME = "application/vnd.apple.mpegurl";
-function fileM3u8(text, base) {
-  const m = /\bfile\s*:\s*["']([^"']+\.m3u8[^"']*)["']/.exec(text || "");
-  return m ? absolute(m[1], base) : null;
-}
-function absolute(href, base) {
-  try {
-    return new URL(href, base).href;
-  } catch (_) {
-    return null;
-  }
-}
-function findIn(html, pick) {
-  return pick(html) || pick(unpack(html) || "") || null;
-}
-function miss(kino2, server, reason) {
-  if (kino2 && typeof kino2.log === "function") kino2.log("[embed69]", server, reason);
-  return null;
-}
-async function pageText(req, url, headers, kino2, server) {
-  const r = await req(url, { headers });
-  return r.ok ? r.text() : miss(kino2, server || "embed", "status " + r.status);
-}
-var LANG_CODES = [
-  [/^(español|espanol|spanish|castellano|latino|spa|esp?)\b/i, "es"],
-  [/^(english|inglés|ingles|eng?)\b/i, "en"],
-  [/^(portugu[eê]s|portuguese|pt)\b/i, "pt"],
-  // never a bare "por": "Por defecto" is not Portuguese
-  [/^(fran[cç]ais|french|franc[eé]s|fre|fra|fr)\b/i, "fr"],
-  [/^(italiano|italian|ita|it)\b/i, "it"],
-  [/^(deutsch|german|alem[aá]n|ger|deu|de)\b/i, "de"]
-];
-function langCode(label) {
-  const s = String(label || "").trim();
-  for (const [re, code] of LANG_CODES) if (re.test(s)) return code;
-  return null;
-}
-function captionTracks(text, base) {
-  const m = /["']?\btracks["']?\s*:\s*\[([\s\S]*?)\]/.exec(text || "");
-  if (!m) return [];
-  const out = [];
-  for (const [obj] of m[1].matchAll(/\{[^{}]*\}/g)) {
-    const field = (k) => (new RegExp(`["']?${k}["']?\\s*:\\s*["']([^"']*)["']`).exec(obj) || [])[1] || "";
-    const kind = field("kind").toLowerCase();
-    if (kind && kind !== "captions" && kind !== "subtitles") continue;
-    const file = field("file");
-    const format = (/\.(vtt|srt)(?:[?#]|$)/i.exec(file) || [])[1];
-    const label = field("label");
-    const lang = langCode(label);
-    const url = format && lang ? absolute(file, base) : null;
-    if (!url || out.some((t2) => t2.url === url)) continue;
-    out.push({ lang, url, label, format: format.toLowerCase() });
-  }
-  return out;
-}
-function durationMsOf(text) {
-  const re = /(?<![-\w])duration["']?\s*:\s*["']?(\d+(?:\.\d+)?)(?![\d.])(?!\s*m?s\b)/g;
-  for (const m of String(text || "").matchAll(re)) {
-    const ms = Math.round(Number(m[1]) * 1e3);
-    if (ms >= 6e4) return ms;
-  }
-  return null;
-}
-function pageExtras(html, base) {
-  const unpacked = unpack(html) || "";
-  const subs = captionTracks(html, base);
-  const subtitles = subs.length ? subs : captionTracks(unpacked, base);
-  const durationMs = durationMsOf(html) || durationMsOf(unpacked);
-  return { ...subtitles.length ? { subtitles } : {}, ...durationMs ? { durationMs } : {} };
-}
-
-// src/extractors/fastream.js
-var HOSTS = ["fastream.to"];
-async function extract(embedUrl, req, kino2) {
-  const html = await pageText(req, embedUrl, { Referer: "https://fastream.to/" }, kino2, "fastream");
-  if (html == null) return null;
-  const url = findIn(html, (t2) => fileM3u8(t2, embedUrl));
-  if (!url) return miss(kino2, "fastream", "no playlist in page");
-  return { url, mime: HLS_MIME, headers: { Referer: "https://fastream.to/" }, ...pageExtras(html, embedUrl) };
-}
-
-// src/extractors/index.js
-var TABLE = { fastream: fastream_exports };
-function extractorFor(embedUrl) {
-  let host;
-  try {
-    host = new URL(embedUrl).hostname.replace(/^www\./, "");
-  } catch (_) {
-    return null;
-  }
-  for (const [name, mod] of Object.entries(TABLE)) {
-    if (mod.HOSTS.some((h) => host === h || host.endsWith("." + h))) return { name, extract: mod.extract };
-  }
-  return null;
-}
-var HOSTS2 = Object.values(TABLE).flatMap((m) => m.HOSTS);
-
 // src/util/lang.js
 function normLang(text) {
   const s = String(text || "").toLowerCase();
@@ -256,6 +129,13 @@ async function episodeHit(title, req) {
     return html.includes("trembed=") && accepted(html, title, true) ? html : null;
   });
 }
+function serverOf(url) {
+  try {
+    return new URL(url).hostname.replace(/^www./, "").split(".")[0].toLowerCase().replace(/[^a-z]/g, "").slice(0, 30);
+  } catch (_) {
+    return "";
+  }
+}
 async function listCopies(title, { req }) {
   const tv = title.kind === "tv";
   if (tv && (title.season == null || title.episode == null)) return [];
@@ -270,8 +150,8 @@ async function listCopies(title, { req }) {
   const out = [];
   for (const row of await embedRows(page, req)) {
     const lang = normLang(row.lang);
-    const known = lang ? extractorFor(row.url) : null;
-    if (known && !out.some((c) => c.embedUrl === row.url)) out.push({ lang, server: known.name, embedUrl: row.url });
+    const server = serverOf(row.url);
+    if (lang && server && !out.some((c) => c.embedUrl === row.url)) out.push({ lang, server, embedUrl: row.url });
   }
   return out;
 }
@@ -302,6 +182,7 @@ var STRINGS = {
   es: {
     unavailable: "El servicio no est\xE1 disponible en este momento.",
     noStreams: "No se encontraron fuentes para este t\xEDtulo.",
+    needResolver: "Para reproducir, instala el motor de reproducci\xF3n desde la tienda de plugins (es gratis).",
     noMeta: "No se encontr\xF3 informaci\xF3n de este t\xEDtulo.",
     trendingMovies: "Pel\xEDculas populares",
     trendingSeries: "Series populares",
@@ -326,6 +207,7 @@ var STRINGS = {
   en: {
     unavailable: "The service is not available right now.",
     noStreams: "No streams found for this title.",
+    needResolver: "To play, install the playback engine from the plugin store (it is free).",
     noMeta: "No metadata found for this title.",
     trendingMovies: "Trending movies",
     trendingSeries: "Trending series",
@@ -579,24 +461,53 @@ function toStream(s, c) {
   if (Number.isFinite(s.durationMs) && s.durationMs > 0) out.durationMs = Math.round(s.durationMs);
   return out;
 }
-async function open(c, req) {
-  const ex = extractorFor(c.embedUrl);
-  if (!ex) return null;
+var HLS = "application/vnd.apple.mpegurl";
+async function resolverInstalled() {
   try {
-    const s = await ex.extract(c.embedUrl, req, kino);
-    return s && typeof s.url === "string" && s.url ? toStream(s, c) : null;
+    await kino.plugins.call("resolver", "normalizeHost", { url: "https://probe.invalid/" });
+    return true;
   } catch (e) {
-    kino.log("[seriesmetro]", c.server, e && e.code || "extract_failed");
+    return (e && e.code) !== "provider_missing";
+  }
+}
+async function answers(stream) {
+  try {
+    const r = await kino.fetch(stream.url, { headers: { ...stream.headers, Range: "bytes=0-2047" }, timeoutMs: 5e3, maxBytes: 2048 });
+    if (r.status === 401 || r.status === 403) return true;
+    if (!r.ok) return false;
+    return !/\.m3u8(\?|$)/i.test(stream.url) || /^\s*#EXTM3U/.test(r.text() || "");
+  } catch (e) {
+    return !!(e && (e.code === "host_not_allowed" || e.code === "too_large"));
+  }
+}
+async function open(c) {
+  try {
+    const res = await kino.plugins.call("resolver", "resolve", { url: c.embedUrl, referer: SITE + "/" });
+    const st = (res && Array.isArray(res.streams) ? res.streams : []).find((x) => x && x.url);
+    if (!st) {
+      kino.log("[seriesmetro]", c.server, res && res.error || "no_stream");
+      return null;
+    }
+    const headers = {};
+    if (st.referer) headers.Referer = st.referer;
+    if (Array.isArray(st.headers)) for (const h of st.headers) {
+      if (h && h.name) headers[h.name] = String(h.value);
+    }
+    const stream = toStream({ url: st.url, headers, mime: st.kind === "hls" || /\.m3u8(\?|$)/i.test(st.url) ? HLS : /\.mp4(\?|$)/i.test(st.url) ? "video/mp4" : void 0, subtitles: res.subtitles }, c);
+    return await answers(stream) ? stream : null;
+  } catch (e) {
+    kino.log("[seriesmetro]", c.server, e && e.code || "resolve_failed");
     return null;
   }
 }
 async function resolve(ref) {
+  if (!await resolverInstalled()) throw kino.error("unavailable", "resolver missing", { userMessage: t("needResolver") });
   const req = makeReq(kino, { deadline: Date.now() + RESOLVE_MS });
   if (ref.startsWith("cp:")) {
     const want = parseCopyRef(ref);
     if (!want) throw kino.error("not_found", "bad copy ref");
     const copy = (await listCopies(await titleOf(want.what), { req })).find((c) => c.lang === want.lang && c.server === want.server);
-    const stream = copy ? await open(copy, req) : null;
+    const stream = copy ? await open(copy) : null;
     if (!stream) throw kino.error("not_found", "copy not available: " + want.lang + "/" + want.server, { userMessage: t("noStreams") });
     return stream;
   }
@@ -608,7 +519,7 @@ async function resolve(ref) {
   let tried = 0;
   for (const c of copies) {
     tried++;
-    main = await open(c, req);
+    main = await open(c);
     if (main) break;
   }
   if (!main) throw kino.error("not_found", "no copy opened for tmdb " + what.tmdbId, { userMessage: t("noStreams") });

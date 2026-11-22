@@ -7,8 +7,7 @@
 //
 // Declared hosts: the site and Fastream. `streamHosts: "any"` is for the CDN the player redirects to.
 
-import { listCopies } from "./seriesmetro.js";
-import { extractorFor } from "./extractors/index.js";
+import { listCopies, SITE } from "./seriesmetro.js";
 import { makeReq, UA } from "./util/http.js";
 
 // Kino waits for every request a call left running before it delivers the call's answer; ask it to drop them once the call settles.
@@ -30,6 +29,7 @@ const STRINGS = {
   es: {
     unavailable: "El servicio no está disponible en este momento.",
     noStreams: "No se encontraron fuentes para este título.",
+    needResolver: "Para reproducir, instala el motor de reproducción desde la tienda de plugins (es gratis).",
     noMeta: "No se encontró información de este título.",
     trendingMovies: "Películas populares",
     trendingSeries: "Series populares",
@@ -54,6 +54,7 @@ const STRINGS = {
   en: {
     unavailable: "The service is not available right now.",
     noStreams: "No streams found for this title.",
+    needResolver: "To play, install the playback engine from the plugin store (it is free).",
     noMeta: "No metadata found for this title.",
     trendingMovies: "Trending movies",
     trendingSeries: "Trending series",
@@ -346,20 +347,49 @@ function toStream(s, c) {
   return out;
 }
 
-/** One copy opened: the stream, or null when its player shows none (or fails). */
-async function open(c, req) {
-  const ex = extractorFor(c.embedUrl);
-  if (!ex) return null;
+const HLS = "application/vnd.apple.mpegurl";
+
+/** True unless the shared kino-resolver is missing (a cheap door probe; only provider_missing means "not installed"). */
+async function resolverInstalled() {
+  try { await kino.plugins.call("resolver", "normalizeHost", { url: "https://probe.invalid/" }); return true; }
+  catch (e) { return (e && e.code) !== "provider_missing"; }
+}
+
+/** Whether a stream answers: a 2 KB peek (maxBytes + Range); a playlist must read like one; a 401/403 (a token) is trusted. */
+async function answers(stream) {
   try {
-    const s = await ex.extract(c.embedUrl, req, kino);
-    return s && typeof s.url === "string" && s.url ? toStream(s, c) : null;
+    const r = await kino.fetch(stream.url, { headers: { ...stream.headers, Range: "bytes=0-2047" }, timeoutMs: 5000, maxBytes: 2048 });
+    if (r.status === 401 || r.status === 403) return true;
+    if (!r.ok) return false;
+    return !/\.m3u8(\?|$)/i.test(stream.url) || /^\s*#EXTM3U/.test(r.text() || "");
   } catch (e) {
-    kino.log("[seriesmetro]", c.server, (e && e.code) || "extract_failed");
+    return !!(e && (e.code === "host_not_allowed" || e.code === "too_large"));
+  }
+}
+
+/**
+ * One copy opened through the shared kino-resolver (its provider door), which reads the player page (fastream and any other
+ * host the site lists); its stream is peeked at first, since a CDN can be down for one file. Null when nothing plays.
+ */
+async function open(c) {
+  try {
+    const res = await kino.plugins.call("resolver", "resolve", { url: c.embedUrl, referer: SITE + "/" });
+    const st = (res && Array.isArray(res.streams) ? res.streams : []).find((x) => x && x.url);
+    if (!st) { kino.log("[seriesmetro]", c.server, (res && res.error) || "no_stream"); return null; }
+    const headers = {};
+    if (st.referer) headers.Referer = st.referer;
+    if (Array.isArray(st.headers)) for (const h of st.headers) { if (h && h.name) headers[h.name] = String(h.value); }
+    const stream = toStream({ url: st.url, headers, mime: st.kind === "hls" || /\.m3u8(\?|$)/i.test(st.url) ? HLS : /\.mp4(\?|$)/i.test(st.url) ? "video/mp4" : undefined, subtitles: res.subtitles }, c);
+    return (await answers(stream)) ? stream : null;
+  } catch (e) {
+    kino.log("[seriesmetro]", c.server, (e && e.code) || "resolve_failed");
     return null;
   }
 }
 
 export async function resolve(ref) {
+  // SeriesMetro plays nothing on its own: the shared kino-resolver opens the players.
+  if (!(await resolverInstalled())) throw kino.error("unavailable", "resolver missing", { userMessage: t("needResolver") });
   const req = makeReq(kino, { deadline: Date.now() + RESOLVE_MS });
 
   // One copy picked from the Servidor menu (or reached by the automatic fallback): just that one
@@ -367,7 +397,7 @@ export async function resolve(ref) {
     const want = parseCopyRef(ref);
     if (!want) throw kino.error("not_found", "bad copy ref");
     const copy = (await listCopies(await titleOf(want.what), { req })).find((c) => c.lang === want.lang && c.server === want.server);
-    const stream = copy ? await open(copy, req) : null;
+    const stream = copy ? await open(copy) : null;
     if (!stream) throw kino.error("not_found", "copy not available: " + want.lang + "/" + want.server, { userMessage: t("noStreams") });
     return stream;
   }
@@ -382,7 +412,7 @@ export async function resolve(ref) {
   let tried = 0;
   for (const c of copies) {
     tried++;
-    main = await open(c, req);
+    main = await open(c);
     if (main) break;
   }
   if (!main) throw kino.error("not_found", "no copy opened for tmdb " + what.tmdbId, { userMessage: t("noStreams") });

@@ -13,6 +13,7 @@ let metaImpl = async () => null;
 let pages = {};
 let logs = [];
 let store = new Map();
+let resolverUp = true;
 globalThis.kino = {
   lang: "es",
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -20,6 +21,8 @@ globalThis.kino = {
   fetch: async (url, opts = {}) => {
     calls.push({ url, opts });
     const p = pages[url];
+    // A playlist the resolver handed back answers like one (resolve peeks at it before playing).
+    if (!p && /\.m3u8(\?|$)/.test(url)) return { ok: true, status: 200, text: () => "#EXTM3U\n", json: () => ({}) };
     if (!p) return { ok: false, status: 404, text: () => "", json: () => ({}) };
     const status = p.status ?? 200;
     return { ok: status < 400, status, text: () => p.body, json: () => JSON.parse(p.body) };
@@ -29,11 +32,21 @@ globalThis.kino = {
   log: (...a) => logs.push(a.join(" ")),
   tmdb: async (path, params) => { tmdbCalls.push({ path, params }); return tmdbImpl(path, params); },
   meta: (q) => metaImpl(q), rank: {},
+  // The shared kino-resolver door, emulated over the same fake pages: it reads a Fastream page's jwplayer file.
+  plugins: { call: async (alias, method, args) => {
+    if (method === "normalizeHost") { if (!resolverUp) throw Object.assign(new Error("missing"), { code: "provider_missing" }); return { server: "x" }; }
+    if (method === "resolve") {
+      const p = pages[args.url];
+      const m = p && /file:\s*"([^"]+\.m3u8[^"]*)"/.exec(p.body);
+      return m ? { streams: [{ url: m[1], kind: "hls", referer: "https://fastream.to/", headers: [{ name: "User-Agent", value: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" }] }] } : { streams: [], error: "needs_browser" };
+    }
+    throw Object.assign(new Error(method), { code: "not_declared" });
+  } },
   error: (code, message, opts = {}) => Object.assign(new Error(message), { code, ...opts }),
 };
 const plugin = await import("../plugin.js");
 
-beforeEach(() => { calls.length = 0; tmdbCalls.length = 0; logs = []; config = {}; pages = {}; store = new Map(); metaImpl = async () => null; tmdbImpl = async () => ({ results: [] }); });
+beforeEach(() => { resolverUp = true; calls.length = 0; tmdbCalls.length = 0; logs = []; config = {}; pages = {}; store = new Map(); metaImpl = async () => null; tmdbImpl = async () => ({ results: [] }); });
 
 const SITE = "https://www3.seriesmetro.net";
 const FAST = (id) => `https://fastream.to/embed-${id}.html`;
@@ -77,13 +90,15 @@ function serveEpisode(slug, season, episode, year = 2008, labels = LABELS, extra
 
 const manifest = JSON.parse(readFileSync(new URL("../kino-plugin.json", import.meta.url), "utf8"));
 
-test("the manifest is valid for Kino and declares only the site and Fastream", () => {
+test("the manifest is valid for Kino, declares only the site and Fastream, and uses the shared resolver", () => {
   const out = validateManifest(readFileSync(new URL("../kino-plugin.json", import.meta.url), "utf8"));
   assert.ok(!out.errors?.length, JSON.stringify(out.errors));
   assert.deepEqual(manifest.hosts, ["www3.seriesmetro.net", "fastream.to"]);
   assert.equal(manifest.streamHosts, "any");
   assert.ok(manifest.capabilities.includes("download"));
   assert.ok(!manifest.fetchHosts && !manifest.browser, "no broad permissions beyond the CDN");
+  assert.deepEqual(manifest.recommends, ["xuper-plugin/kino-plugin-kino-resolver"]);
+  assert.deepEqual(manifest.enhancements["20"].consumes.resolver, { repo: "xuper-plugin/kino-plugin-kino-resolver", door: "resolver", calls: ["resolve"] });
 });
 
 test("a movie finds its page by title, plays Latino on Fastream and keeps the other languages as lazy copies", async () => {
@@ -96,6 +111,7 @@ test("a movie finds its page by title, plays Latino on Fastream and keeps the ot
   assert.equal(a.headers.Referer, "https://fastream.to/");
   assert.match(a.headers["User-Agent"], /Mozilla/);
   assert.deepEqual(a.alternatives.map((x) => x.label), ["Castellano · Fastream", "Subtitulado · Fastream"]);
+  assert.ok(calls.some((c) => c.url === "https://s1.fastream.to/hls/lat/master.m3u8" && c.opts.maxBytes === 2048), "the playlist was peeked at, not downloaded");
   assert.deepEqual(a.alternatives.map((x) => x.ref), ["cp:m:354912:esp:fastream", "cp:m:354912:sub:fastream"]);
   assert.ok(a.alternatives.every((x) => !x.url && x.ref.length <= 512));
 });
@@ -189,7 +205,7 @@ test("a player Fastream shows nothing for is skipped: the next one plays and the
   assert.ok(!a.alternatives.some((x) => x.label === "Latino · Fastream"));
 });
 
-test("options on hosts no extractor knows are left out; with only those, the person reads a readable error", async () => {
+test("a host the resolver cannot open inline is tried and passed over; with only those, the person reads a readable error", async () => {
   serveMovie("coco", 2017, ["Waaw -Latino"], { ...trembed(0, "https://waaw.example/e/1") });
   await assert.rejects(() => plugin.resolve("m:354912"), (e) => e.code === "not_found" && e.userMessage === "No se encontraron fuentes para este título.");
 });
@@ -302,4 +318,23 @@ test("the cache action empties only the cached titles", async () => {
   kino.storage.set("show:1", "{}"); kino.storage.set("movie:2", "{}"); kino.storage.set("other", "{}");
   assert.equal((await plugin.action("clearCache")).message, "Caché de títulos vaciada.");
   assert.deepEqual([...store.keys()], ["other"]);
+});
+
+test("without the shared resolver installed, resolve asks to install the playback engine (never naming the brand)", async () => {
+  serveMovie("coco");
+  resolverUp = false;
+  await assert.rejects(() => plugin.resolve("m:354912"), (e) => e.code === "unavailable" && /motor de reproducci/.test(e.userMessage) && !/kino/i.test(e.userMessage));
+});
+
+test("a copy whose playlist does not answer (a dead CDN node) is passed over: the next language plays", async () => {
+  serveMovie("coco", 2017, LABELS, { "https://s1.fastream.to/hls/lat/master.m3u8": { status: 504, body: "" } });
+  const a = await plugin.resolve("m:354912");
+  assert.equal(a.label, "Castellano · Fastream");
+});
+
+test("a host the site adds later is offered too (the resolver opens it), named after its host", async () => {
+  serveMovie("coco", 2017, ["Fastream -Latino", "Voe -Latino"], { ...trembed(1, "https://voe.sx/e/zz") });
+  const a = await plugin.resolve("m:354912");
+  assert.equal(a.label, "Latino · Fastream");
+  assert.deepEqual(a.alternatives.map((x) => x.ref), ["cp:m:354912:lat:voe"]);
 });
