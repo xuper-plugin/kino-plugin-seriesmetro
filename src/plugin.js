@@ -9,6 +9,8 @@
 
 import { listCopies, SITE } from "./seriesmetro.js";
 import { makeReq, UA } from "./util/http.js";
+import { makeBrowse } from "./browse/index.js";
+import { RESOLVER_REPO, resolveViaHelper, resolverInstalled } from "./resolve-door.js";
 
 // Kino waits for every request a call left running before it delivers the call's answer; ask it to drop them once the call settles.
 globalThis.__kinoDropPendingFetches = true;
@@ -29,7 +31,7 @@ const STRINGS = {
   es: {
     unavailable: "El servicio no está disponible en este momento.",
     noStreams: "No se encontraron fuentes para este título.",
-    needResolver: "Para reproducir, instala el motor de reproducción desde la tienda de plugins (es gratis).",
+    needResolver: "Para reproducir, abre SeriesMetro desde el menú e instala el motor de reproducción que te pedirá.",
     noMeta: "No se encontró información de este título.",
     trendingMovies: "Películas populares",
     trendingSeries: "Series populares",
@@ -54,7 +56,7 @@ const STRINGS = {
   en: {
     unavailable: "The service is not available right now.",
     noStreams: "No streams found for this title.",
-    needResolver: "To play, install the playback engine from the plugin store (it is free).",
+    needResolver: "To play, open SeriesMetro from the menu and install the playback engine it asks for.",
     noMeta: "No metadata found for this title.",
     trendingMovies: "Trending movies",
     trendingSeries: "Trending series",
@@ -347,12 +349,14 @@ function toStream(s, c) {
   return out;
 }
 
-const HLS = "application/vnd.apple.mpegurl";
-
-/** True unless the shared kino-resolver is missing (a cheap door probe; only provider_missing means "not installed"). */
-async function resolverInstalled() {
-  try { await kino.plugins.call("resolver", "normalizeHost", { url: "https://probe.invalid/" }); return true; }
-  catch (e) { return (e && e.code) !== "provider_missing"; }
+// A hidden-browser capture costs up to 20 s whether or not it finds the video, so the budget is spent on the ATTEMPT, and a
+// capture only starts if a whole page still fits before this resolve's deadline.
+const MAX_CAPTURES = 1;
+const CAPTURE_PAGE_MS = 23000;
+function takeCapture(budget) {
+  if (!budget || budget.captures <= 0 || budget.deadline - Date.now() < CAPTURE_PAGE_MS) return false;
+  budget.captures -= 1;
+  return true;
 }
 
 /** Whether a stream answers: a 2 KB peek (maxBytes + Range); a playlist must read like one; a 401/403 (a token) is trusted. */
@@ -368,19 +372,16 @@ async function answers(stream) {
 }
 
 /**
- * One copy opened through the shared kino-resolver (its provider door), which reads the player page (fastream and any other
- * host the site lists); its stream is peeked at first, since a CDN can be down for one file. Null when nothing plays.
+ * One copy opened through the shared kino-resolver (its provider door), which reads the player page (fastream and any other host the
+ * site lists); a host it can't open inline is captured in SeriesMetro's own hidden WebView while the budget allows. A stream the
+ * resolver found is peeked at first (its CDN can be down for one file). Null when nothing plays.
  */
-async function open(c) {
+async function open(c, budget) {
   try {
-    const res = await kino.plugins.call("resolver", "resolve", { url: c.embedUrl, referer: SITE + "/" });
-    const st = (res && Array.isArray(res.streams) ? res.streams : []).find((x) => x && x.url);
-    if (!st) { kino.log("[seriesmetro]", c.server, (res && res.error) || "no_stream"); return null; }
-    const headers = {};
-    if (st.referer) headers.Referer = st.referer;
-    if (Array.isArray(st.headers)) for (const h of st.headers) { if (h && h.name) headers[h.name] = String(h.value); }
-    const stream = toStream({ url: st.url, headers, mime: st.kind === "hls" || /\.m3u8(\?|$)/i.test(st.url) ? HLS : /\.mp4(\?|$)/i.test(st.url) ? "video/mp4" : undefined, subtitles: res.subtitles }, c);
-    return (await answers(stream)) ? stream : null;
+    const out = await resolveViaHelper(c.embedUrl, kino, SITE + "/", () => takeCapture(budget));
+    if (!out || typeof out.url !== "string" || !out.url) { kino.log("[seriesmetro]", c.server, "no_stream"); return null; }
+    const stream = toStream(out, c);
+    return out.captured || (await answers(stream)) ? stream : null;
   } catch (e) {
     kino.log("[seriesmetro]", c.server, (e && e.code) || "resolve_failed");
     return null;
@@ -389,15 +390,16 @@ async function open(c) {
 
 export async function resolve(ref) {
   // SeriesMetro plays nothing on its own: the shared kino-resolver opens the players.
-  if (!(await resolverInstalled())) throw kino.error("unavailable", "resolver missing", { userMessage: t("needResolver") });
+  if (!(await resolverInstalled(kino))) throw kino.error("unavailable", "resolver missing", { userMessage: t("needResolver") });
   const req = makeReq(kino, { deadline: Date.now() + RESOLVE_MS });
+  const budget = { captures: MAX_CAPTURES, deadline: Date.now() + RESOLVE_MS };
 
   // One copy picked from the Servidor menu (or reached by the automatic fallback): just that one
   if (ref.startsWith("cp:")) {
     const want = parseCopyRef(ref);
     if (!want) throw kino.error("not_found", "bad copy ref");
     const copy = (await listCopies(await titleOf(want.what), { req })).find((c) => c.lang === want.lang && c.server === want.server);
-    const stream = copy ? await open(copy) : null;
+    const stream = copy ? await open(copy, budget) : null;
     if (!stream) throw kino.error("not_found", "copy not available: " + want.lang + "/" + want.server, { userMessage: t("noStreams") });
     return stream;
   }
@@ -412,7 +414,7 @@ export async function resolve(ref) {
   let tried = 0;
   for (const c of copies) {
     tried++;
-    main = await open(c);
+    main = await open(c, budget);
     if (main) break;
   }
   if (!main) throw kino.error("not_found", "no copy opened for tmdb " + what.tmdbId, { userMessage: t("noStreams") });
@@ -429,4 +431,58 @@ export async function action(key) {
     }
     return { message: t("cacheCleared") };
   }
+}
+
+// ---- browse screen + Kino Resolver install gate ----
+
+const SUPPORT_URL = "https://ko-fi.com/xuperplugins";
+
+/** The donate affordance under every install button: a QR on TV (a TV can't open a link well), a heart button on phone/desktop. */
+function supportNode(device) {
+  if (device === "tv") return { type: "QrImage", value: SUPPORT_URL, size: "large", labelText: "Si te gusta mi trabajo, escanéalo y apóyame", labelTextEn: "If you like my work, scan it and support me" };
+  return { type: "ElevatedButton", key: "donate", icon: "heart", labelText: "Si te gusta mi trabajo, apóyame", labelTextEn: "If you like my work, support me", onPressed: { go: { url: { href: SUPPORT_URL } } } };
+}
+
+/** The install gate: the first screen while the shared kino-resolver (the engine SeriesMetro plays through) is not installed.
+ *  The donate button sits under the install button, as on every gate. */
+function installGateView(device) {
+  return { type: "Scaffold", key: "seriesmetro-install",
+    body: { type: "SingleChildScrollView", key: "installScroll", children: [
+      { type: "Column", padding: 24, gap: 16, crossAxisAlignment: "stretch", children: [
+        { type: "Text", text: "Necesitas el motor de reproducción", textEn: "You need the playback engine", style: "h3" },
+        { type: "Text", color: "secondary", text: "SeriesMetro reproduce a través de Kino Resolver (gratis). Instálalo una vez y sirve para este y para otros plugins de sitios.", textEn: "SeriesMetro plays through Kino Resolver (free). Install it once and it works here and in other site plugins." },
+        { type: "ElevatedButton", key: "installResolver", labelText: "Instalar Kino Resolver", labelTextEn: "Install Kino Resolver", onPressed: { go: { installPlugin: { repo: RESOLVER_REPO } } } },
+        supportNode(device),
+      ] },
+    ] },
+  };
+}
+
+/** The tabs of the own browse screen: one tab, the TMDB Home rows (movies and series). */
+const SCREEN_TABS = [
+  { id: "inicio", es: "Películas y series", en: "Movies & series" },
+];
+
+let browseInstance = null;
+const browseScreen = () => (browseInstance ??= makeBrowse({
+  kino,
+  brand: "SeriesMetro",
+  tabs: SCREEN_TABS,
+  loadTab: async () => ({ rows: await home() }),
+  searchTitles: (q) => search({ q }),
+  canPlay: false,
+}));
+
+/** `screen(ctx)`: the install gate while the resolver is missing, the rich browse screen (its TMDB Home rows) once it is there. */
+export async function screen(ctx) {
+  await null;
+  const c = ctx && typeof ctx === "object" ? ctx : {};
+  if (!(c.installed && c.installed[RESOLVER_REPO])) return installGateView(c.device);
+  return browseScreen().view(c);
+}
+
+/** `screenEvent(ev)`: the screen's events (its timers load a tab or a search, one per call). */
+export async function screenEvent(ev) {
+  await null;
+  return browseScreen().event(ev && typeof ev === "object" ? ev : {});
 }

@@ -96,9 +96,37 @@ test("the manifest is valid for Kino, declares only the site and Fastream, and u
   assert.deepEqual(manifest.hosts, ["www3.seriesmetro.net", "fastream.to"]);
   assert.equal(manifest.streamHosts, "any");
   assert.ok(manifest.capabilities.includes("download"));
-  assert.ok(!manifest.fetchHosts && !manifest.browser, "no broad permissions beyond the CDN");
+  assert.ok(!manifest.fetchHosts, "no fetch to any host: only the site and the players");
+  assert.equal(manifest.apiVersion, 20);
+  assert.equal(manifest.browser, true, "the hidden browser takes a player the resolver can't open inline");
+  assert.ok(manifest.capabilities.includes("screen") && manifest.screen && manifest.screen.menuOpens === "screen");
   assert.deepEqual(manifest.recommends, ["xuper-plugin/kino-plugin-kino-resolver"]);
-  assert.deepEqual(manifest.enhancements["20"].consumes.resolver, { repo: "xuper-plugin/kino-plugin-kino-resolver", door: "resolver", calls: ["resolve"] });
+  assert.deepEqual(manifest.consumes.resolver, { repo: "xuper-plugin/kino-plugin-kino-resolver", door: "resolver", calls: ["resolve"] });
+});
+
+test("the screen is the install gate until the resolver is installed, then the browse screen", async () => {
+  const gate = JSON.stringify(await plugin.screen({ device: "phone", installed: {} }));
+  assert.match(gate, /Instalar Kino Resolver/);
+  assert.match(gate, /installPlugin/);
+  assert.match(gate, /"key":"donate"/);
+  assert.match(JSON.stringify(await plugin.screen({ device: "tv", installed: {} })), /QrImage/, "on TV the donation is a QR");
+  const browse = JSON.stringify(await plugin.screen({ device: "phone", installed: { "xuper-plugin/kino-plugin-kino-resolver": true } }));
+  assert.ok(!/Instalar Kino Resolver/.test(browse), "installed -> the browse screen, not the gate");
+  await plugin.screenEvent({ event: "tab", arg: "inicio" }); // drives the screen without throwing
+});
+
+test("a player the resolver can't open inline is captured in the hidden browser (one page per resolve)", async () => {
+  serveMovie("coco", 2017, ["Voe -Latino", "Voe -Castellano"], { ...trembed(0, "https://voe.sx/e/a"), ...trembed(1, "https://voe.sx/e/b") });
+  const captured = [];
+  globalThis.kino.browser = { capture: async (url) => { captured.push(url); return { media: [] }; } };
+  try {
+    await assert.rejects(() => plugin.resolve("m:354912"), (e) => e.code === "not_found");
+    assert.equal(captured.length, 1, "a failed capture spends the budget: the second player opens no 20 s page");
+    globalThis.kino.browser = { capture: async (url) => { captured.push(url); return { media: [{ url: "https://cdn.test/voe/master.m3u8", headers: { Referer: "https://voe.sx/" } }] }; } };
+    const a = await plugin.resolve("m:354912");
+    assert.equal(a.url, "https://cdn.test/voe/master.m3u8");
+    assert.equal(a.label, "Latino · voe");
+  } finally { delete globalThis.kino.browser; }
 });
 
 test("a movie finds its page by title, plays Latino on Fastream and keeps the other languages as lazy copies", async () => {

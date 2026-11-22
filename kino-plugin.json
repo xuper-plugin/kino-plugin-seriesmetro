@@ -1,8 +1,8 @@
 {
   "id": "seriesmetro",
   "name": "SeriesMetro",
-  "version": "1.1.0",
-  "apiVersion": 9,
+  "version": "1.2.0",
+  "apiVersion": 20,
   "entry": "plugin.js",
   "icon": "icon.png",
   "description": "Películas y series en latino, castellano o subtituladas, a través de SeriesMetro.",
@@ -19,7 +19,8 @@
     "browse",
     "episodes",
     "resolve",
-    "download"
+    "download",
+    "screen"
   ],
   "categories": [
     "movies",
@@ -79,17 +80,29 @@
   "recommends": [
     "xuper-plugin/kino-plugin-kino-resolver"
   ],
-  "enhancements": {
-    "20": {
-      "consumes": {
-        "resolver": {
-          "repo": "xuper-plugin/kino-plugin-kino-resolver",
-          "door": "resolver",
-          "calls": [
-            "resolve"
-          ]
-        }
-      }
+  "browser": true,
+  "screen": {
+    "label": "SeriesMetro",
+    "labelEn": "SeriesMetro",
+    "icon": "movie",
+    "menuOpens": "screen",
+    "opensFrom": [
+      "menu",
+      "settings"
+    ],
+    "settingsButton": {
+      "label": "Abrir SeriesMetro",
+      "labelEn": "Open SeriesMetro"
+    },
+    "settingsIn": "screen"
+  },
+  "consumes": {
+    "resolver": {
+      "repo": "xuper-plugin/kino-plugin-kino-resolver",
+      "door": "resolver",
+      "calls": [
+        "resolve"
+      ]
     }
   }
 }
