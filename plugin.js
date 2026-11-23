@@ -271,6 +271,11 @@ var WORDS = {
   back: ["Atr\xE1s", "Back"],
   close: ["Cerrar", "Close"],
   settings: ["Ajustes", "Settings"],
+  resultsTitle: ["Resultados: {q}", "Results: {q}"],
+  resultsIn: ["En {name}", "In {name}"],
+  resultsSearching: ["Buscando en {name}\u2026", "Searching {name}\u2026"],
+  resultsFailed: ["{name} no respondi\xF3 esta vez.", "{name} did not answer this time."],
+  noResults: ["No encontramos nada con esas palabras en tus plugins.", "Nothing in your plugins matched those words."],
   supportTv: ["Si te gusta mi trabajo, escan\xE9alo y ap\xF3yame", "If you like my work, scan it and support me"],
   support: ["Si te gusta mi trabajo, ap\xF3yame", "If you like my work, support me"],
   gateTitle: ["Necesitas el motor de reproducci\xF3n", "You need the playback engine"],
@@ -377,13 +382,15 @@ var rail = (r, key, words, headers) => ({
   items: r.items,
   ...withHeaders(headers)
 });
-function browseView(cfg, { tab, data, recent, pending, failed, searching = false, device = "phone" }) {
+function browseView(cfg, { tab, data, recent, pending, failed, searching = false, device = "phone", own = null }) {
   const tv = device === "tv";
-  const tabs = cfg.tabs;
+  const tabs = own ? [cfg.tabs[0]] : cfg.tabs;
   const active = tabs.some((t2) => t2.id === tab) ? tab : tabs[0].id;
   const withTabs = tabs.length > 1;
   const body = [];
-  if (data) {
+  if (own) {
+    body.push(...own);
+  } else if (data) {
     const h = cfg.imageHeaders;
     if (data.slides.length > 0) body.push(hero(data.slides, h));
     if (recent.length > 0) body.push(rail({ items: recent }, "recent", twin("recent", "title"), h));
@@ -431,6 +438,32 @@ function browseView(cfg, { tab, data, recent, pending, failed, searching = false
       { type: "SingleChildScrollView", key: "browse-" + active, flex: 1, children: [...banner ? [banner] : [], { type: "Column", padding: { compact: 12, expanded: 24 }, gap: 16, children: body }] }
     ] },
     ...pending ? { every: { ms: POLL_MS, event: "tick" } } : {}
+  };
+}
+function resultsView(cfg, { q, order, names, pending, found, device = "phone" }) {
+  const body = [];
+  let shown = 0;
+  order.forEach((repo, i) => {
+    const name = [names[repo] || repo, names[repo] || repo];
+    if (pending.includes(repo)) {
+      body.push({ type: "Column", key: "wait-" + i, gap: 8, children: [{ type: "Text", key: "waitText-" + i, color: "muted", ...twin("resultsSearching", "text", { name }) }, railSkeleton(i)] });
+      return;
+    }
+    const r = found.get(repo);
+    if (!r || !r.ok) {
+      body.push({ type: "Text", key: "failed-" + i, color: "muted", ...twin("resultsFailed", "text", { name }) });
+      return;
+    }
+    if (!r.items.length) return;
+    shown++;
+    body.push(rail({ items: r.items }, "found-" + i, twin("resultsIn", "title", { name }), cfg.imageHeaders));
+  });
+  if (!pending.length && shown === 0) body.unshift({ type: "Text", key: "noResults", ...twin("noResults") });
+  return {
+    type: "Scaffold",
+    appBar: bar({ leading: iconButton("back", "arrow_back", "back", "back"), title: { type: "Text", key: "resultsTitle", style: "h4", ...twin("resultsTitle", "text", { q }) } }),
+    body: { type: "SingleChildScrollView", key: "results-page", children: [{ type: "Column", padding: { compact: 12, expanded: 24 }, gap: 16, children: body }] },
+    ...pending.length ? { every: { ms: 1500, event: "tick" } } : {}
   };
 }
 function settingsView(cfg, device = "phone") {
@@ -565,7 +598,7 @@ var INFLIGHT_KEY = "std:inflight";
 var INFLIGHT_STALE_MS = 18e3;
 var MAX_META_TICKS = 10;
 var DEFAULT_TABS = [{ id: "inicio", label: "Inicio", labelEn: "Home" }];
-function makeStandardScreen({ kino: kino2, name, nameEn, logo = null, logoAspect = "1:1", needsResolver, hasSettings, tabs, loadTab, homeKey = null, titleOf: titleOf3, typeOf, tmdbPictures = false, imageHeaders = null }) {
+function makeStandardScreen({ kino: kino2, name, nameEn, logo = null, logoAspect = "1:1", needsResolver, hasSettings, tabs, loadTab, homeKey = null, titleOf: titleOf3, typeOf, tmdbPictures = false, imageHeaders = null, searchHere = null, page = null }) {
   const cfg = { name, nameEn, logo, logoAspect, imageHeaders, hasSettings: !!hasSettings, tabs: Array.isArray(tabs) && tabs.length > 0 ? tabs : DEFAULT_TABS };
   const TAB_IDS = cfg.tabs.map((t2) => t2.id);
   const meta = makeMetaCache({ kino: kino2, titleOf: titleOf3, typeOf, tmdbPictures });
@@ -596,6 +629,12 @@ function makeStandardScreen({ kino: kino2, name, nameEn, logo = null, logoAspect
     };
   };
   const metaTicks = /* @__PURE__ */ new Map();
+  const found = /* @__PURE__ */ new Map();
+  const SOURCES_PER_TICK = 3;
+  const asFound = (a, index) => ({
+    ok: !!(a && a.ok),
+    items: a && a.ok && Array.isArray(a.items) ? a.items.filter((x) => x && x.id && x.ref && x.title).slice(0, 40).map((x) => ({ ...x, id: ("p" + index + "~" + x.id).slice(0, 128), origin: a.repo })) : []
+  });
   const memo = /* @__PURE__ */ new Map();
   const log = (...a) => {
     try {
@@ -687,12 +726,28 @@ function makeStandardScreen({ kino: kino2, name, nameEn, logo = null, logoAspect
     const device = c.device || "phone";
     if (needsResolver && !(c.installed && c.installed[RESOLVER_REPO])) return gateView(cfg, device);
     if (c.route && c.route.name === "settings") return settingsView(cfg, device);
+    if (searchHere && c.route && c.route.name === "results") {
+      const st0 = c.state && typeof c.state === "object" ? c.state : {};
+      return resultsView(cfg, {
+        q: String(st0.rq || ""),
+        order: Array.isArray(st0.rorder) ? st0.rorder : [],
+        names: st0.rnames || {},
+        pending: Array.isArray(st0.rpending) ? st0.rpending : [],
+        found,
+        device
+      });
+    }
     const st = c.state && typeof c.state === "object" ? c.state : {};
     const tab = TAB_IDS.includes(st.tab) ? st.tab : tabFromArgs(c.route) ?? stored() ?? TAB_IDS[0];
     const data = enrich(dataOf(tab));
     const loaded = TAB_IDS.map((t2) => memo.get(t2)).filter(Boolean).map((m) => m.data);
     const pending = Array.isArray(st.pending) && st.pending.length > 0;
     const searching = st.searching === true;
+    if (page) {
+      const tree = browseView(cfg, { tab: TAB_IDS[0], data: null, recent: [], pending: false, failed: false, searching, device, own: page.view({ ...c, state: st }) || [] });
+      const every = page.every ? page.every({ ...c, state: st }) : null;
+      return every ? { ...tree, every } : tree;
+    }
     return browseView(cfg, { tab, data, recent: meta.dress(recentOf(readKeys(), loaded)), pending, failed: !!(st.failed && st.failed[tab]), searching, device });
   }
   function cutShort() {
@@ -708,16 +763,16 @@ function makeStandardScreen({ kino: kino2, name, nameEn, logo = null, logoAspect
   }
   async function load(tab) {
     set(INFLIGHT_KEY, JSON.stringify({ tab, at: Date.now() }));
-    let page;
+    let page2;
     try {
-      page = await loadTab(tab);
+      page2 = await loadTab(tab);
     } finally {
       try {
         kino2.storage.remove(INFLIGHT_KEY);
       } catch (_) {
       }
     }
-    const data = tabOf(page);
+    const data = tabOf(page2);
     if (data) {
       memo.set(tab, { data, whole: true });
       writeSnap(tab, data);
@@ -725,7 +780,19 @@ function makeStandardScreen({ kino: kino2, name, nameEn, logo = null, logoAspect
     return data !== null;
   }
   const events = {
-    open({ route, state, device }) {
+    async open(ev) {
+      if (page) {
+        let patch = {};
+        try {
+          patch = (page.open ? await page.open(ev) : {}) || {};
+        } catch (e) {
+          log("page open", e && e.code || "error");
+        }
+        return { state: { ...patch, tab: TAB_IDS[0], pending: [], failed: null } };
+      }
+      return events.openTabs(ev);
+    },
+    openTabs({ route, state, device }) {
       const tab = tabFromArgs(route) ?? (TAB_IDS.includes(state.tab) ? state.tab : stored() ?? TAB_IDS[0]);
       for (const t2 of TAB_IDS) dataOf(t2);
       return { state: { tab, pending: needed(tab), failed: null } };
@@ -745,7 +812,24 @@ function makeStandardScreen({ kino: kino2, name, nameEn, logo = null, logoAspect
       const queued = Array.isArray(state.pending) ? state.pending.filter((t2) => t2 !== tab) : [];
       return { state: { failed: null, pending: [tab, ...queued] } };
     },
-    async tick({ state }) {
+    async tick({ state, route }) {
+      if (searchHere && route && route.name === "results") {
+        const rp = Array.isArray(state.rpending) ? state.rpending : [];
+        if (rp.length === 0) return null;
+        const batch = rp.slice(0, SOURCES_PER_TICK);
+        const order = Array.isArray(state.rorder) ? state.rorder : [];
+        let answers2 = [];
+        try {
+          answers2 = await searchHere.searchIn(String(state.rq || ""), batch);
+        } catch (e) {
+          log("results", e && e.code || "error");
+        }
+        for (const repo of batch) {
+          const a = (Array.isArray(answers2) ? answers2 : []).find((x) => x && x.repo === repo);
+          found.set(repo, asFound(a, order.indexOf(repo)));
+        }
+        return { state: { rpending: rp.slice(SOURCES_PER_TICK) } };
+      }
       const pending = Array.isArray(state.pending) ? state.pending : [];
       if (pending.length === 0) return null;
       const [next, ...rest] = pending;
@@ -789,12 +873,31 @@ function makeStandardScreen({ kino: kino2, name, nameEn, logo = null, logoAspect
     searchClosed() {
       return { state: { searching: false, ui: null } };
     },
-    search({ value, state, device }) {
+    async search({ value, state, device }) {
       const typed = value && typeof value === "object" ? value.q : value;
       const raw = typed != null && String(typed).trim() !== "" ? typed : state.inputs && state.inputs.q;
       const q = String(raw == null ? "" : raw).trim().slice(0, Q_MAX);
       if (!q) return null;
-      return { go: { search: { q } }, ui: searchClosedOps(device === "tv" && TAB_IDS.length > 1), state: { searching: false, ui: null } };
+      const closed = searchClosedOps(device === "tv" && TAB_IDS.length > 1);
+      if (searchHere) {
+        let sources = [];
+        try {
+          sources = await searchHere.sources() || [];
+        } catch (e) {
+          log("sources", e && e.code || "error");
+        }
+        const order = sources.map((x) => x.repo).filter((r) => typeof r === "string");
+        found.clear();
+        return { route: { push: "results" }, ui: closed, state: {
+          searching: false,
+          ui: null,
+          rq: q,
+          rorder: order,
+          rnames: Object.fromEntries(sources.map((x) => [x.repo, String(x.name || x.repo)])),
+          rpending: order
+        } };
+      }
+      return { go: { search: { q } }, ui: closed, state: { searching: false, ui: null } };
     },
     openSettings() {
       return { route: { push: "settings" }, state: { fromBrowse: true } };
@@ -807,7 +910,9 @@ function makeStandardScreen({ kino: kino2, name, nameEn, logo = null, logoAspect
   async function screenEvent2(ev) {
     const e = ev || {};
     const name2 = e.name != null ? e.name : e.event;
-    const handler = typeof name2 === "string" && Object.hasOwn(events, name2) ? events[name2] : null;
+    const own = page && page.events && typeof name2 === "string" && Object.hasOwn(page.events, name2) && !Object.hasOwn(events, name2) ? page.events[name2] : null;
+    if (own) return await own({ ...e, state: e.state || {} }) ?? null;
+    const handler = typeof name2 === "string" && name2 !== "openTabs" && Object.hasOwn(events, name2) ? events[name2] : null;
     return handler ? await handler({ ...e, state: e.state || {} }) ?? null : null;
   }
   return { screen: screen2, screenEvent: screenEvent2, notePlayed };
@@ -891,6 +996,40 @@ async function resolverInstalled(kino2) {
   } catch (err) {
     return (err && err.code) !== "provider_missing";
   }
+}
+
+// src/std/catalog.js
+var CATALOG_MAX = 40;
+var OVERVIEW_MAX2 = 300;
+var HTTPS3 = /^https:\/\//;
+function catalogItems(found) {
+  const out = [];
+  const list = Array.isArray(found) ? found : found && Array.isArray(found.items) ? found.items : [];
+  for (const it of list) {
+    if (out.length >= CATALOG_MAX) break;
+    if (!it || typeof it.id !== "string" || !it.id || typeof it.ref !== "string" || !it.ref || typeof it.title !== "string" || !it.title) continue;
+    const item = { id: it.id, ref: it.ref, title: it.title, kind: typeof it.kind === "string" && it.kind ? it.kind : "movie" };
+    if (typeof it.poster === "string" && HTTPS3.test(it.poster)) item.poster = it.poster;
+    if (typeof it.backdrop === "string" && HTTPS3.test(it.backdrop)) item.backdrop = it.backdrop;
+    if (it.year !== void 0 && it.year !== null && String(it.year)) item.year = String(it.year);
+    if (typeof it.overview === "string" && it.overview.trim()) item.overview = it.overview.trim().slice(0, OVERVIEW_MAX2);
+    const tmdb2 = it.ids && Number.isInteger(it.ids.tmdb) ? it.ids.tmdb : Number.isInteger(it.tmdb) ? it.tmdb : 0;
+    if (tmdb2 > 0) item.tmdb = tmdb2;
+    out.push(item);
+  }
+  return out;
+}
+function catalogQuery(arg) {
+  const q = String(arg && arg.q || "").trim().slice(0, 200);
+  const type = arg && (arg.type === "movie" || arg.type === "series") ? arg.type : "any";
+  return { q, type, season: 0, episode: 0, tmdbId: 0, year: 0, originalTitle: "", altTitles: [], cursor: null };
+}
+function catalogDoor(search2) {
+  return async (arg) => {
+    const query = catalogQuery(arg);
+    if (!query.q) return [];
+    return catalogItems(await search2(query));
+  };
 }
 
 // src/plugin.js
@@ -1272,12 +1411,14 @@ async function screenEvent(ev) {
   await null;
   return standard().screenEvent(ev && typeof ev === "object" ? ev : {});
 }
+var proto_catalog_search = catalogDoor(search);
 export {
   action,
   browse,
   categories,
   episodes,
   home,
+  proto_catalog_search,
   resolve,
   screen,
   screenEvent,
