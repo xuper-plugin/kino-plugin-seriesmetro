@@ -446,7 +446,7 @@ export async function action(key) {
 
 // SeriesMetro delegates every hoster to kino-resolver (resolve() refuses with needResolver while it is missing), so the screen is the install gate until it is installed.
 let std = null;
-const standard = () => (std ??= makeStandardScreen({
+const standard = () => (std ??= makeStandardScreen({ snapshot: "xuper-plugin/kino-plugin-seriesmetro",
   kino, name: "SeriesMetro", logo: LOGO, logoAspect: LOGO_ASPECT, needsResolver: true, hasSettings: true,
   tabs: [
     { id: "inicio", label: "Películas y series", labelEn: "Movies & series" },
