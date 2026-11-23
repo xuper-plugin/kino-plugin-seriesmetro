@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.5
+
+- Back arrow instead of the X: leaving goes back to where you came from (std 1.7.1)
+
 ## 1.3.4
 
 - Catalog door: Da-Video finds titles here (std 1.7.0)
