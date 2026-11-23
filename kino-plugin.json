@@ -1,7 +1,7 @@
 {
   "id": "seriesmetro",
   "name": "SeriesMetro",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "apiVersion": 20,
   "entry": "plugin.js",
   "icon": "icon.png",

@@ -12,6 +12,12 @@ import { makeReq, UA } from "./util/http.js";
 import { makeBrowse } from "./browse/index.js";
 import { RESOLVER_REPO, resolveViaHelper, resolverInstalled } from "./resolve-door.js";
 
+/**
+ * kino.tmdb in the person's language. Kino fills the language from the call's turn, and a call from the screen's timers has no
+ * turn: TMDB then answered in English (the browse screen's hero read "On Halloween night…" on a Spanish Kino, Redmi 2026-11-22).
+ */
+const tmdb = (path, params = {}) => kino.tmdb(path, { language: String(kino.lang || "").toLowerCase().startsWith("en") ? "en-US" : "es-MX", ...params });
+
 // Kino waits for every request a call left running before it delivers the call's answer; ask it to drop them once the call settles.
 globalThis.__kinoDropPendingFetches = true;
 
@@ -151,7 +157,7 @@ const HOME_ROWS = [
 const DISCOVER = { sort_by: "popularity.desc", "vote_count.gte": 200 };
 
 async function homeRow(row) {
-  const res = await kino.tmdb(row.path, { ...(row.path.startsWith("/discover") ? DISCOVER : {}), ...(row.params || {}) });
+  const res = await tmdb(row.path, { ...(row.path.startsWith("/discover") ? DISCOVER : {}), ...(row.params || {}) });
   // a row of posters: what has none looks broken
   const items = (res?.results || []).filter((r) => r.poster_path).slice(0, 20).map((r) => itemFromTmdb(r, row.kind));
   return items.length ? { id: row.id, title: t(row.title), genre: row.genre, ref: row.ref, items } : null;
@@ -179,18 +185,18 @@ export async function search(query) {
   const type = query.type;
 
   if (type === "series") {
-    const res = await kino.tmdb("/search/tv", { query: query.q });
+    const res = await tmdb("/search/tv", { query: query.q });
     return kino.rank.filterRelevant((res?.results || []).map((r) => itemFromTmdb(r, "tv")), titlesOf(query));
   }
   if (type === "movie") {
-    const res = await kino.tmdb("/search/movie", { query: query.q });
+    const res = await tmdb("/search/movie", { query: query.q });
     return kino.rank.filterRelevant((res?.results || []).map((r) => itemFromTmdb(r, "movie")), titlesOf(query));
   }
 
   // "any", and the kinds this plugin has nothing for (anime, music, podcast): both catalogs, ranked by how they match
   const [movies, tv] = await Promise.all([
-    kino.tmdb("/search/movie", { query: query.q }),
-    kino.tmdb("/search/tv", { query: query.q }),
+    tmdb("/search/movie", { query: query.q }),
+    tmdb("/search/tv", { query: query.q }),
   ]);
   const all = [
     ...(movies?.results || []).map((r) => itemFromTmdb(r, "movie")),
@@ -228,7 +234,7 @@ export async function browse(ref, cursor) {
     return { items: [] };
   }
 
-  const res = await kino.tmdb(path, params);
+  const res = await tmdb(path, params);
   const items = (res?.results || []).filter((r) => r.poster_path).map((r) => itemFromTmdb(r, kind));
   const next = res?.page < res?.total_pages ? String(page + 1) : undefined;
   return { items, next };
@@ -237,7 +243,7 @@ export async function browse(ref, cursor) {
 // ---- categories ----
 
 export async function categories() {
-  const [mg, tg] = await Promise.all([kino.tmdb("/genre/movie/list"), kino.tmdb("/genre/tv/list")]);
+  const [mg, tg] = await Promise.all([tmdb("/genre/movie/list"), tmdb("/genre/tv/list")]);
   const cats = [];
   for (const g of (mg?.genres || []).slice(0, 12)) cats.push({ id: "gm" + g.id, title: g.name, ref: "genre:movie:" + g.id });
   for (const g of (tg?.genres || []).slice(0, 8)) cats.push({ id: "gt" + g.id, title: g.name + " (series)", ref: "genre:tv:" + g.id });
