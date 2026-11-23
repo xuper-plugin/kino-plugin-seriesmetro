@@ -17,7 +17,7 @@ function slugify(title) {
 var SITE = "https://www3.seriesmetro.net";
 var MAX_OPTIONS = 8;
 var AT_ONCE = 3;
-var MAX_PROBES = 4;
+var MAX_PROBES = 8;
 function titleSlugs(titles) {
   const out = [];
   for (const t2 of [titles && titles.esMX, titles && titles.esES, titles && titles.original, titles && titles.en]) {
@@ -25,6 +25,11 @@ function titleSlugs(titles) {
     if (s && !out.includes(s)) out.push(s);
   }
   return out;
+}
+function pageSlugs(title) {
+  const plain = titleSlugs(title && title.titles);
+  const year = title && title.year;
+  return year ? [...plain, ...plain.filter((s) => !s.endsWith("-" + year)).map((s) => s + "-" + year)] : plain;
 }
 function yearMatches(found, wanted) {
   if (!wanted || !found) return true;
@@ -94,7 +99,7 @@ async function firstHit(candidates, probe) {
   return null;
 }
 async function movieHit(title, req) {
-  return firstHit(titleSlugs(title.titles), async (slug) => {
+  return firstHit(pageSlugs(title), async (slug) => {
     const r = await req(`${SITE}/pelicula/${slug}/`);
     if (!r.ok) return null;
     const html = r.text();
@@ -102,7 +107,7 @@ async function movieHit(title, req) {
   });
 }
 async function episodeHit(title, req) {
-  return firstHit(titleSlugs(title.titles), async (slug) => {
+  return firstHit(pageSlugs(title), async (slug) => {
     const r = await req(`${SITE}/serie/${slug}/`);
     if (!r.ok) return null;
     const post = /data-post="(\d+)"/.exec(r.text());

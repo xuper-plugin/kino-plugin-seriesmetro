@@ -366,3 +366,10 @@ test("a host the site adds later is offered too (the resolver opens it), named a
   assert.equal(a.label, "Latino · Fastream");
   assert.deepEqual(a.alternatives.map((x) => x.ref), ["cp:m:354912:lat:voe"]);
 });
+
+test("a title whose plain slug belongs to another page is also looked up with the year (the site's '-2026' pages)", async () => {
+  const { pageSlugs } = await import("../src/seriesmetro.js");
+  assert.deepEqual(pageSlugs({ titles: { esMX: "El corazón de la bestia", original: "Heart of the Beast" }, year: 2026 }),
+    ["el-corazon-de-la-bestia", "heart-of-the-beast", "el-corazon-de-la-bestia-2026", "heart-of-the-beast-2026"]);
+  assert.deepEqual(pageSlugs({ titles: { esMX: "Coco" } }), ["coco"], "no year, no suffix");
+});

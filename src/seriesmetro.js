@@ -7,7 +7,7 @@ export const SITE = "https://www3.seriesmetro.net";
 const MAX_OPTIONS = 8;
 const AT_ONCE = 3; // Kino runs at most 6 fetches at once per plugin
 /** Most candidate pages one lookup may try before giving up on the title. */
-const MAX_PROBES = 4;
+const MAX_PROBES = 8;
 
 /** Distinct slugs of the title's names, in priority order (es-MX, es-ES, original, en). */
 export function titleSlugs(titles) {
@@ -17,6 +17,17 @@ export function titleSlugs(titles) {
     if (s && !out.includes(s)) out.push(s);
   }
   return out;
+}
+
+/**
+ * The page slugs to try for [title]: every title slug, then the same slugs with the year — the site suffixes the year when another
+ * page already took the plain slug ("el-corazon-de-la-bestia" is the old film, "el-corazon-de-la-bestia-2026" the new one). The
+ * plain ones go first so the usual title costs no extra request.
+ */
+export function pageSlugs(title) {
+  const plain = titleSlugs(title && title.titles);
+  const year = title && title.year;
+  return year ? [...plain, ...plain.filter((s) => !s.endsWith("-" + year)).map((s) => s + "-" + year)] : plain;
 }
 
 /** Page years differ by one between the site and TMDB now and then; that much is tolerated. */
@@ -103,7 +114,7 @@ async function firstHit(candidates, probe) {
 }
 
 async function movieHit(title, req) {
-  return firstHit(titleSlugs(title.titles), async (slug) => {
+  return firstHit(pageSlugs(title), async (slug) => {
     const r = await req(`${SITE}/pelicula/${slug}/`);
     if (!r.ok) return null;
     const html = r.text();
@@ -113,7 +124,7 @@ async function movieHit(title, req) {
 
 // A series page shows no year, so the year is judged on the episode page it leads to.
 async function episodeHit(title, req) {
-  return firstHit(titleSlugs(title.titles), async (slug) => {
+  return firstHit(pageSlugs(title), async (slug) => {
     const r = await req(`${SITE}/serie/${slug}/`);
     if (!r.ok) return null;
     const post = /data-post="(\d+)"/.exec(r.text());
