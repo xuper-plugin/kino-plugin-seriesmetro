@@ -9,8 +9,9 @@
 
 import { listCopies, SITE } from "./seriesmetro.js";
 import { makeReq, UA } from "./util/http.js";
-import { makeBrowse } from "./browse/index.js";
-import { RESOLVER_REPO, resolveViaHelper, resolverInstalled } from "./resolve-door.js";
+import { makeStandardScreen } from "./std/index.js";
+import { LOGO, LOGO_ASPECT } from "./logo.js";
+import { resolveViaHelper, resolverInstalled } from "./resolve-door.js";
 
 /**
  * kino.tmdb in the person's language. Kino fills the language from the call's turn, and a call from the screen's timers has no
@@ -441,56 +442,24 @@ export async function action(key) {
   }
 }
 
-// ---- browse screen + Kino Resolver install gate ----
+// ---- the screen: the standard xuper-plugin screen (src/std) ----
 
-const SUPPORT_URL = "https://ko-fi.com/xuperplugins";
-
-/** The donate affordance under every install button: a QR on TV (a TV can't open a link well), a heart button on phone/desktop. */
-function supportNode(device) {
-  if (device === "tv") return { type: "QrImage", value: SUPPORT_URL, size: "large", labelText: "Si te gusta mi trabajo, escanéalo y apóyame", labelTextEn: "If you like my work, scan it and support me" };
-  return { type: "ElevatedButton", key: "donate", icon: "heart", labelText: "Si te gusta mi trabajo, apóyame", labelTextEn: "If you like my work, support me", onPressed: { go: { url: { href: SUPPORT_URL } } } };
-}
-
-/** The install gate: the first screen while the shared kino-resolver (the engine SeriesMetro plays through) is not installed.
- *  The donate button sits under the install button, as on every gate. */
-function installGateView(device) {
-  return { type: "Scaffold", key: "seriesmetro-install",
-    body: { type: "SingleChildScrollView", key: "installScroll", children: [
-      { type: "Column", padding: 24, gap: 16, crossAxisAlignment: "stretch", children: [
-        { type: "Text", text: "Necesitas el motor de reproducción", textEn: "You need the playback engine", style: "h3" },
-        { type: "Text", color: "secondary", text: "SeriesMetro reproduce a través de Kino Resolver (gratis). Instálalo una vez y sirve para este y para otros plugins de sitios.", textEn: "SeriesMetro plays through Kino Resolver (free). Install it once and it works here and in other site plugins." },
-        { type: "ElevatedButton", key: "installResolver", labelText: "Instalar Kino Resolver", labelTextEn: "Install Kino Resolver", onPressed: { go: { installPlugin: { repo: RESOLVER_REPO } } } },
-        supportNode(device),
-      ] },
-    ] },
-  };
-}
-
-/** The tabs of the own browse screen: one tab, the TMDB Home rows (movies and series). */
-const SCREEN_TABS = [
-  { id: "inicio", es: "Películas y series", en: "Movies & series" },
-];
-
-let browseInstance = null;
-const browseScreen = () => (browseInstance ??= makeBrowse({
-  kino,
-  brand: "SeriesMetro",
-  tabs: SCREEN_TABS,
+// SeriesMetro delegates every hoster to kino-resolver (resolve() refuses with needResolver while it is missing), so the screen is the install gate until it is installed.
+let std = null;
+const standard = () => (std ??= makeStandardScreen({
+  kino, name: "SeriesMetro", logo: LOGO, logoAspect: LOGO_ASPECT, needsResolver: true, hasSettings: true,
+  tabs: [
+    { id: "inicio", label: "Películas y series", labelEn: "Movies & series" },
+  ],
   loadTab: async () => ({ rows: await home() }),
-  searchTitles: (q) => search({ q }),
-  canPlay: false,
 }));
 
-/** `screen(ctx)`: the install gate while the resolver is missing, the rich browse screen (its TMDB Home rows) once it is there. */
 export async function screen(ctx) {
   await null;
-  const c = ctx && typeof ctx === "object" ? ctx : {};
-  if (!(c.installed && c.installed[RESOLVER_REPO])) return installGateView(c.device);
-  return browseScreen().view(c);
+  return standard().screen(ctx && typeof ctx === "object" ? ctx : {});
 }
 
-/** `screenEvent(ev)`: the screen's events (its timers load a tab or a search, one per call). */
 export async function screenEvent(ev) {
   await null;
-  return browseScreen().event(ev && typeof ev === "object" ? ev : {});
+  return standard().screenEvent(ev && typeof ev === "object" ? ev : {});
 }

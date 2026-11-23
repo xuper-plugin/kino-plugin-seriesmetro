@@ -175,8 +175,8 @@ function makeReq(kino2, { deadline }) {
   return req;
 }
 
-// src/browse/model.js
-var MAX_SLIDES = 6;
+// src/std/model.js
+var MAX_SLIDES = 5;
 var MAX_RAILS = 8;
 var MAX_RAIL_ITEMS = 20;
 var MAX_SLIDE_TEXT = 160;
@@ -185,49 +185,70 @@ function cardOf(item) {
   const out = { id: item.id, ref: item.ref, title: item.title, kind: item.kind };
   if (item.poster && HTTPS.test(item.poster)) out.poster = item.poster;
   if (item.backdrop && HTTPS.test(item.backdrop)) out.backdrop = item.backdrop;
+  if (item.badges) out.badges = item.badges;
+  if (item.rating !== void 0) out.rating = item.rating;
   if (item.year !== void 0) out.year = item.year;
+  if (item.ids && item.ids.tmdb) out.ids = { tmdb: item.ids.tmdb };
   if (item.lang) out.lang = item.lang;
+  if (item.adult === true) out.adult = true;
   return out;
 }
-function slidesOf(rows) {
+var slidesOf = (rows) => pickSlides(rows, (item) => item.backdrop);
+var posterSlidesOf = (rows) => pickSlides(rows, (item) => item.poster);
+function slideText(overview, item = {}) {
+  const text = typeof overview === "string" ? overview.trim() : "";
+  if (text === "") return [item.year, item.rating ? "\u2605 " + item.rating : null].filter(Boolean).join(" \xB7 ");
+  return text.length <= MAX_SLIDE_TEXT ? text : `${text.slice(0, MAX_SLIDE_TEXT - 1).trimEnd()}\u2026`;
+}
+function pickSlides(rows, pictureOf) {
   const out = [];
   const seen = /* @__PURE__ */ new Set();
   for (const row of rows) {
-    for (const item of row.items) {
+    for (const item of row.items || []) {
       if (out.length >= MAX_SLIDES) return out;
-      const image = item.backdrop && HTTPS.test(item.backdrop) ? item.backdrop : item.poster;
-      if (seen.has(item.id) || !image || !HTTPS.test(image)) continue;
-      const text = typeof item.overview === "string" ? item.overview.trim() : "";
-      if (text === "") continue;
+      const image = pictureOf(item);
+      if (item.adult === true || seen.has(item.id) || !image || !HTTPS.test(image)) continue;
       seen.add(item.id);
-      out.push({ id: item.id, ref: item.ref, kind: item.kind, title: item.title, image, text: text.length <= MAX_SLIDE_TEXT ? text : `${text.slice(0, MAX_SLIDE_TEXT - 1).trimEnd()}\u2026` });
+      out.push({ id: item.id, ref: item.ref, kind: item.kind, title: item.title, image, text: slideText(item.overview, item) });
     }
   }
   return out;
 }
+var uniform = (items) => items.every((i) => i.backdrop) ? items : items.map(({ backdrop, ...rest }) => rest);
 function railsOf(rows) {
   return rows.filter((r) => !r.hidden && r.items && r.items.length > 0).slice(0, MAX_RAILS).map((r) => ({
     id: r.id,
     title: r.title,
-    ...r.titleEn ? { titleEn: r.titleEn } : {},
     ...r.ref ? { ref: r.ref } : {},
-    items: r.items.slice(0, MAX_RAIL_ITEMS).map(cardOf)
+    items: uniform(r.items.slice(0, MAX_RAIL_ITEMS).map(cardOf))
   }));
 }
 function tabOf(page) {
   const rows = page && Array.isArray(page.rows) ? page.rows : [];
   const rails = railsOf(rows);
   if (rails.length === 0) return null;
-  return { slides: slidesOf(rows), rails };
+  return { slides: slidesOf(rows), posterSlides: posterSlidesOf(rows), rails };
+}
+function playedKey(ref) {
+  const m = /^(?:m|s|e):(\d{1,10})(?::|$)/.exec(String(ref || ""));
+  return m ? `t:${m[1]}` : String(ref || "");
 }
 function recentOf(keys, tabs) {
   if (keys.length === 0) return [];
-  const byRef = /* @__PURE__ */ new Map();
-  for (const data of tabs) for (const rail2 of data.rails) for (const card of rail2.items) if (!byRef.has(card.ref)) byRef.set(card.ref, card);
+  const byKey = /* @__PURE__ */ new Map();
+  for (const data of tabs) {
+    for (const rail2 of data.rails) {
+      for (const card of rail2.items) {
+        const ks = [card.ref];
+        if (card.ids && card.ids.tmdb) ks.push(`t:${card.ids.tmdb}`);
+        for (const k of ks) if (!byKey.has(k)) byKey.set(k, card);
+      }
+    }
+  }
   const out = [];
   const used = /* @__PURE__ */ new Set();
   for (const key of keys) {
-    const card = byRef.get(key);
+    const card = byKey.get(key);
     if (card && !used.has(card.id)) {
       used.add(card.id);
       out.push(card);
@@ -236,40 +257,84 @@ function recentOf(keys, tabs) {
   return out;
 }
 
-// src/i18n.js
-var T = {
-  brWatch: ["Ver ahora", "Watch now"],
-  brInfo: ["M\xE1s informaci\xF3n", "More info"],
-  brRecent: ["Continuar viendo", "Continue watching"],
-  brEmpty: ["No hay t\xEDtulos para mostrar ahora.", "There is nothing to show right now."],
-  brFailed: ["No se pudo cargar esta secci\xF3n. Revisa tu conexi\xF3n.", "This section could not be loaded. Check your connection."],
-  brRetry: ["Reintentar", "Retry"],
-  brClose: ["Cerrar", "Close"],
-  brBack: ["Atr\xE1s", "Back"],
-  brSearch: ["Buscar", "Search"],
-  brSettings: ["Ajustes", "Settings"],
-  brSearchHint: ["Escribe un t\xEDtulo", "Type a title"],
-  brSearchTitle: ["Buscar", "Search"],
-  brSearchFailed: ["La b\xFAsqueda no respondi\xF3. Intenta de nuevo.", "The search did not answer. Try again."],
-  brNoResults: ["No encontramos nada con esas palabras.", "Nothing matched those words."],
-  brSearchedBefore: ["Buscados antes", "Searched before"],
-  noServer: ["Esta pel\xEDcula no tiene ahora un servidor que abra. Intenta de nuevo m\xE1s tarde.", "This movie has no server that opens right now. Try again later."],
-  siteDown: ["El cat\xE1logo no responde ahora. Intenta de nuevo en un rato.", "The catalog is not answering right now. Try again in a moment."]
+// src/std/strings.js
+var WORDS = {
+  watch: ["Ver", "Watch"],
+  info: ["M\xE1s informaci\xF3n", "More info"],
+  recent: ["Continuar viendo", "Continue watching"],
+  search: ["Buscar", "Search"],
+  searchHint: ["Buscar en {name}", "Search {name}"],
+  failed: ["No se pudo cargar esta secci\xF3n. Revisa tu conexi\xF3n e int\xE9ntalo de nuevo.", "This section could not be loaded. Check your connection and try again."],
+  retry: ["Reintentar", "Retry"],
+  empty: ["A\xFAn no hay nada aqu\xED.", "Nothing here yet."],
+  back: ["Atr\xE1s", "Back"],
+  close: ["Cerrar", "Close"],
+  settings: ["Ajustes", "Settings"],
+  supportTv: ["Si te gusta mi trabajo, escan\xE9alo y ap\xF3yame", "If you like my work, scan it and support me"],
+  support: ["Si te gusta mi trabajo, ap\xF3yame", "If you like my work, support me"],
+  gateTitle: ["Necesitas el motor de reproducci\xF3n", "You need the playback engine"],
+  gateText: [
+    "{name} reproduce a trav\xE9s de Kino Resolver (gratis). Inst\xE1lalo una vez y sirve para este y para otros plugins de sitios.",
+    "{name} plays through Kino Resolver (free). Install it once and it works here and in other site plugins."
+  ],
+  gateInstall: ["Instalar Kino Resolver", "Install Kino Resolver"]
 };
-function both(key, vars = {}) {
-  const pair = T[key] || [key, key];
-  const fill = (s) => s.replace(/\{(\w+)\}/g, (_, k) => k in vars ? String(vars[k]) : "");
-  return { es: fill(pair[0]), en: fill(pair[1]) };
+var fill = (s, vars) => s.replace(/\{(\w+)\}/g, (m, k) => vars && vars[k] != null ? String(vars[k]) : m);
+function twin(key, field = "text", vars) {
+  const [es, en] = WORDS[key];
+  const pick = (i) => vars && Object.fromEntries(Object.entries(vars).map(([k, v]) => [k, Array.isArray(v) ? v[i] : v]));
+  return { [field]: fill(es, pick(0)), [field + "En"]: fill(en, pick(1)) };
 }
+var STRING_KEYS = Object.keys(WORDS);
 
-// src/browse/view.js
+// src/std/view.js
+var SUPPORT_URL = "https://ko-fi.com/xuperplugins";
+var RESOLVER_REPO = "xuper-plugin/kino-plugin-kino-resolver";
 var POLL_MS = 1500;
-var SEARCH_CAP = 60;
-var twin = (key, field = "text", vars) => {
-  const w = both(key, vars);
-  return { [field]: w.es, [field + "En"]: w.en };
-};
-var tabLabel = (tab) => ({ label: tab.es, labelEn: tab.en });
+function brand(cfg) {
+  return {
+    type: "Row",
+    key: "brand",
+    gap: 12,
+    crossAxisAlignment: "center",
+    children: [
+      ...cfg.logo ? [{ type: "Image", key: "logo", url: cfg.logo, aspect: cfg.logoAspect || "1:1", fit: "contain", h: 32, alt: cfg.name, altEn: cfg.nameEn || cfg.name }] : [],
+      { type: "Text", key: "name", style: "h4", text: cfg.name, textEn: cfg.nameEn || cfg.name }
+    ]
+  };
+}
+var tabBar = (tabs, active) => ({
+  type: "TabBar",
+  key: "tabs",
+  divider: false,
+  value: active,
+  onChanged: "tab",
+  tabs: tabs.map((t2) => ({ value: t2.id, label: t2.label, labelEn: t2.labelEn || t2.label }))
+});
+var iconButton = (key, icon, word, onPressed) => ({ type: "IconButton", key, icon, ...twin(word, "labelText"), ...twin(word, "tooltip"), onPressed });
+var searchOpenOps = (tabsInBar) => [
+  { hide: "brand" },
+  { hide: "searchButton" },
+  { hide: "settingsButton" },
+  ...tabsInBar ? [{ hide: "tabs" }] : [],
+  { show: "closeSearch" },
+  { show: "q" },
+  { focus: "q" }
+];
+var searchClosedOps = (tabsInBar) => [
+  { hide: "closeSearch" },
+  { hide: "q" },
+  { clear: "q" },
+  { show: "brand" },
+  { show: "searchButton" },
+  { show: "settingsButton" },
+  ...tabsInBar ? [{ show: "tabs" }] : []
+];
+function supportNode(device) {
+  if (device === "tv") return { type: "QrImage", key: "donate", value: SUPPORT_URL, size: "large", ...twin("supportTv", "labelText") };
+  return { type: "ElevatedButton", key: "donate", icon: "heart", ...twin("support", "labelText"), onPressed: { go: { url: { href: SUPPORT_URL } } } };
+}
+var bar = ({ leading, title, actions = [] }) => ({ type: "AppBar", mergeWithKinoBar: true, dense: true, divider: false, leading, title, actions });
 var railSkeleton = (n) => ({
   type: "Column",
   key: "skel" + n,
@@ -280,17 +345,10 @@ var railSkeleton = (n) => ({
     { type: "Row", gap: 12, sizes: ["medium", "expanded"], children: [1, 2, 3, 4, 5, 6].map((i) => ({ type: "Skeleton", shape: "card", key: `sk${n}w${i}`, flex: 1 })) }
   ]
 });
-var gridSkeleton = () => ({
-  type: "Column",
-  key: "gridSkeleton",
-  gap: 12,
-  children: [
-    ...[1, 2].map((r) => ({ type: "Row", gap: 12, sizes: ["compact"], key: `gc${r}`, children: [1, 2, 3].map((i) => ({ type: "Skeleton", shape: "card", key: `gc${r}-${i}`, flex: 1 })) })),
-    ...[1, 2].map((r) => ({ type: "Row", gap: 12, sizes: ["medium", "expanded"], key: `gw${r}`, children: [1, 2, 3, 4, 5, 6].map((i) => ({ type: "Skeleton", shape: "card", key: `gw${r}-${i}`, flex: 1 })) }))
-  ]
-});
 var heroSkeleton = () => ({ type: "Skeleton", key: "heroSkeleton", shape: "block", height: { compact: 200, expanded: 320 } });
-var slideNode = (s, canPlay) => ({
+var titleOf = (s) => ({ ref: s.ref, kind: s.kind, id: s.id, title: s.title });
+var withHeaders = (headers) => headers ? { headers } : {};
+var slideNode = (s, headers) => ({
   type: "heroCard",
   key: "slide-" + s.id,
   h: { compact: 200, expanded: 240 },
@@ -298,122 +356,112 @@ var slideNode = (s, canPlay) => ({
   title: s.title,
   text: s.text,
   image: s.image,
-  buttons: canPlay ? [
-    { type: "ElevatedButton", key: "watch-" + s.id, ...twin("brWatch", "labelText"), icon: "play", onPressed: { go: { play: { ref: s.ref, kind: s.kind, id: s.id, title: s.title } } } },
-    { type: "TextButton", key: "info-" + s.id, ...twin("brInfo", "labelText"), onPressed: { go: { title: { ref: s.ref, kind: s.kind, id: s.id, title: s.title } } } }
-  ] : [
-    { type: "ElevatedButton", key: "watch-" + s.id, ...twin("brWatch", "labelText"), icon: "play", onPressed: { go: { title: { ref: s.ref, kind: s.kind, id: s.id, title: s.title } } } }
+  ...withHeaders(headers),
+  buttons: [
+    { type: "ElevatedButton", key: "watch-" + s.id, ...twin("watch", "labelText"), icon: "play", onPressed: { go: { play: titleOf(s) } } },
+    { type: "TextButton", key: "info-" + s.id, ...twin("info", "labelText"), onPressed: { go: { title: titleOf(s) } } }
   ]
 });
-var hero = (slides, canPlay) => slides.length === 1 ? slideNode(slides[0], canPlay) : { type: "PageView", key: "hero" + slides.length, autoPlayMs: 6e3, children: slides.map((x) => slideNode(x, canPlay)) };
-var rail = (r, key, titleOverride) => ({
+var hero = (slides, headers) => slides.length === 1 ? slideNode(slides[0], headers) : {
+  type: "PageView",
+  key: "hero" + slides.length,
+  autoPlayMs: 6e3,
+  children: slides.map((s) => slideNode(s, headers))
+};
+var rail = (r, key, words, headers) => ({
   type: "titleRail",
   key,
-  ...titleOverride || { title: r.title, ...r.titleEn ? { titleEn: r.titleEn } : {} },
+  ...words || { title: r.title, titleEn: r.titleEn || r.title },
   ...r.ref ? { ref: r.ref } : {},
   items: r.items,
-  size: "medium"
+  ...withHeaders(headers)
 });
-var brandNode = (brand) => ({ type: "Text", key: "logo", text: brand, textEn: brand, style: "h4" });
-var tabBar = (tabs, active) => ({ type: "TabBar", key: "tabs", divider: false, value: active, onChanged: "tab", tabs: tabs.map((t2) => ({ value: t2.id, ...tabLabel(t2) })) });
-function browseView({ brand, tabs, tab, data, recent, pending, failed, canPlay = false, device = "phone" }) {
+function browseView(cfg, { tab, data, recent, pending, failed, device = "phone" }) {
   const tv = device === "tv";
+  const tabs = cfg.tabs;
   const active = tabs.some((t2) => t2.id === tab) ? tab : tabs[0].id;
+  const withTabs = tabs.length > 1;
   const body = [];
   if (data) {
-    if (data.slides.length > 0) body.push(hero(data.slides, canPlay));
-    if (recent.length > 0) body.push(rail({ items: recent }, "recent", twin("brRecent", "title")));
-    for (const r of data.rails) body.push(rail(r, "rail-" + String(r.id).replace(/[^A-Za-z0-9_-]/g, "_")));
-    if (data.rails.length === 0) body.push({ type: "Text", ...twin("brEmpty", "text"), color: "muted" });
+    const h = cfg.imageHeaders;
+    if (data.slides.length > 0) body.push(hero(data.slides, h));
+    if (recent.length > 0) body.push(rail({ items: recent }, "recent", twin("recent", "title"), h));
+    for (const r of data.rails) body.push(rail(r, "rail-" + String(r.id).replace(/[^A-Za-z0-9_-]/g, "_"), null, h));
+    if (data.rails.length === 0) body.push({ type: "Text", key: "empty", ...twin("empty"), color: "muted" });
   } else if (failed) {
-    body.push({ type: "MaterialBanner", key: "loadFailed", role: "error", ...twin("brFailed"), action: { ...twin("brRetry", "label"), onTap: "retry" } });
+    body.push({ type: "MaterialBanner", key: "loadFailed", role: "error", ...twin("failed"), action: { ...twin("retry", "label"), onTap: "retry" } });
   } else {
     body.push(heroSkeleton(), railSkeleton(1), railSkeleton(2), railSkeleton(3));
   }
-  const gear = { type: "IconButton", key: "settingsButton", icon: "settings", ...twin("brSettings", "labelText"), ...twin("brSettings", "tooltip"), onPressed: { event: "go", arg: "settings" } };
+  const isBanner = (n) => !!n && (n.type === "heroCard" || n.key === "heroSkeleton" || n.type === "PageView" && String(n.key).startsWith("hero"));
+  const banner = body.length > 0 && isBanner(body[0]) ? body.shift() : null;
+  const tabsInBar = tv && withTabs;
+  const appBar = bar({
+    leading: iconButton("close", "close", "close", { go: { close: true } }),
+    title: { type: "Row", key: "titleRow", gap: tabsInBar ? 24 : 8, crossAxisAlignment: "center", children: [
+      { ...iconButton("closeSearch", "arrow_back", "back", { ui: searchClosedOps(tabsInBar) }), hidden: true },
+      brand(cfg),
+      ...tabsInBar ? [tabBar(tabs, active)] : [],
+      {
+        type: "TextField",
+        key: "q",
+        hidden: true,
+        flex: 1,
+        kind: "search",
+        maxLength: 200,
+        ...twin("searchHint", "hintText", { name: [cfg.name, cfg.nameEn || cfg.name] }),
+        onSubmitted: "search",
+        trailingIcon: "search",
+        ...twin("search", "trailingLabel"),
+        onTrailingTap: "search"
+      }
+    ] },
+    actions: [
+      iconButton("searchButton", "search", "search", { ui: searchOpenOps(tabsInBar) }),
+      iconButton("settingsButton", "settings", "settings", "openSettings")
+    ]
+  });
   return {
     type: "Scaffold",
-    appBar: {
-      type: "AppBar",
-      mergeWithKinoBar: true,
-      dense: true,
-      divider: false,
-      leading: { type: "IconButton", key: "close", icon: "close", ...twin("brClose", "labelText"), ...twin("brClose", "tooltip"), onPressed: { go: { close: true } } },
-      // On a TV the search is a button of the bar (a floating one is hard to reach with a remote); elsewhere it floats.
-      actions: tv ? [{ type: "IconButton", key: "searchButton", icon: "search", ...twin("brSearch", "labelText"), ...twin("brSearch", "tooltip"), onPressed: "openSearch" }, gear] : [gear],
-      // On a TV the tabs sit in the bar beside the name (one row, one D-pad strip); elsewhere they are pinned under it.
-      title: tv ? { type: "Row", key: "titleRow", gap: 24, crossAxisAlignment: "center", children: [brandNode(brand), tabBar(tabs, active)] } : brandNode(brand)
-    },
-    ...tv ? {} : { floatingActionButton: { type: "FloatingActionButton", key: "searchFab", icon: "search", ...twin("brSearch", "tooltip"), onPressed: "openSearch" } },
+    appBar,
     body: { type: "Column", key: "page", children: [
-      ...tv ? [] : [{ type: "Column", key: "tabsRow", padding: { compact: 0, expanded: 24 }, children: [tabBar(tabs, active)] }],
-      { type: "SingleChildScrollView", key: "browse-" + active, flex: 1, children: [{ type: "Column", padding: { compact: 12, expanded: 24 }, gap: 16, children: body }] }
+      ...withTabs && !tv ? [{ type: "Column", key: "tabsRow", padding: { compact: 0, expanded: 24 }, children: [tabBar(tabs, active)] }] : [],
+      { type: "SingleChildScrollView", key: "browse-" + active, flex: 1, children: [...banner ? [banner] : [], { type: "Column", padding: { compact: 12, expanded: 24 }, gap: 16, children: body }] }
     ] },
     ...pending ? { every: { ms: POLL_MS, event: "tick" } } : {}
   };
 }
-function searchView({ query, status, items, history = [], device = "phone" }) {
-  const tv = device === "tv";
-  const searchForm = () => ({
-    type: "Form",
-    key: "searchForm",
-    onSubmitted: "search",
-    gap: 8,
-    children: tv ? [{ type: "Row", key: "searchRow", gap: 16, crossAxisAlignment: "center", children: [
-      { type: "TextField", key: "q", kind: "text", value: query, ...twin("brSearchHint", "labelText"), maxLength: 100, autofocus: true, weight: 1 },
-      { type: "ElevatedButton", key: "searchGo", ...twin("brSearch", "labelText"), icon: "search", submit: true }
-    ] }] : [
-      { type: "TextField", key: "q", kind: "text", value: query, ...twin("brSearchHint", "labelText"), maxLength: 100, autofocus: true },
-      { type: "ElevatedButton", key: "searchGo", ...twin("brSearch", "labelText"), icon: "search", submit: true }
-    ]
-  });
-  const body = tv ? [] : [searchForm()];
-  if (status === "fail") {
-    body.push({ type: "MaterialBanner", key: "searchFailed", role: "error", ...twin("brSearchFailed"), action: { ...twin("brRetry", "label"), onTap: "sretry" } });
-  } else if (status === "done" && items) {
-    if (items.length === 0) body.push({ type: "Text", ...twin("brNoResults", "text"), color: "muted" });
-    else body.push({ type: "titleGrid", key: "results", columns: { compact: 3, expanded: 6 }, items: items.slice(0, SEARCH_CAP) });
-  } else if (status !== "idle") {
-    body.push(gridSkeleton());
-  } else if (history.length > 0) {
-    body.push({ type: "Text", ...twin("brSearchedBefore", "text"), style: "h4" });
-    body.push({ type: "titleGrid", key: "history", columns: { compact: 3, expanded: 6 }, items: history.slice(0, SEARCH_CAP) });
-  }
+function settingsView(cfg, device = "phone") {
   return {
     type: "Scaffold",
-    appBar: {
-      type: "AppBar",
-      mergeWithKinoBar: true,
-      dense: true,
-      divider: false,
-      leading: { type: "IconButton", key: "back", icon: "arrow_back", ...twin("brBack", "labelText"), ...twin("brBack", "tooltip"), onPressed: "back" },
-      ...tv ? { title: searchForm() } : twin("brSearchTitle", "title")
-    },
-    body: { type: "SingleChildScrollView", key: "search-page", children: [{ type: "Column", padding: { compact: 12, expanded: 24 }, gap: 16, children: body }] },
-    ...status === "loading" ? { every: { ms: 1e3, event: "stick" } } : {}
+    appBar: bar({ leading: iconButton("back", "arrow_back", "back", "back"), title: brand(cfg) }),
+    body: { type: "SingleChildScrollView", key: "settings-page", children: [{ type: "Column", padding: { compact: 12, expanded: 24 }, gap: 16, children: [
+      ...cfg.hasSettings ? [{ type: "settings", key: "form" }, { type: "Divider", key: "supportDivider" }] : [],
+      supportNode(device)
+    ] }] }
   };
 }
-function settingsView({ brand }) {
+function gateView(cfg, device = "phone") {
+  const name = [cfg.name, cfg.nameEn || cfg.name];
   return {
     type: "Scaffold",
-    appBar: {
-      type: "AppBar",
-      mergeWithKinoBar: true,
-      dense: true,
-      divider: false,
-      leading: { type: "IconButton", key: "back", icon: "arrow_back", ...twin("brBack", "labelText"), ...twin("brBack", "tooltip"), onPressed: "back" },
-      title: brandNode(brand)
-    },
-    body: { type: "SingleChildScrollView", key: "settings-page", children: [{ type: "Column", padding: { compact: 12, expanded: 24 }, gap: 16, children: [{ type: "settings", key: "form" }] }] }
+    appBar: bar({ leading: iconButton("close", "close", "close", { go: { close: true } }), title: brand(cfg) }),
+    body: { type: "Column", key: "gate", mainAxisAlignment: "center", crossAxisAlignment: "center", padding: 24, gap: 16, children: [
+      { type: "Text", key: "gateTitle", style: "h3", ...twin("gateTitle") },
+      { type: "Text", key: "gateText", style: "p", ...twin("gateText", "text", { name }) },
+      { type: "ElevatedButton", key: "installResolver", ...twin("gateInstall", "labelText"), onPressed: { go: { installPlugin: { repo: RESOLVER_REPO } } } },
+      supportNode(device)
+    ] }
   };
 }
 
-// src/browse/metaCache.js
-var KEY = "meta1";
-var MAX = 120;
-var CALL_MS = 8e3;
+// src/std/metaCache.js
+var KEY = "meta3";
+var MAX = 160;
+var CONCURRENCY = 3;
+var OVERVIEW_MAX = 160;
 var HTTPS2 = /^https:\/\//;
-function makeMetaCache({ kino: kino2, titleOf: titleOf2 = (c) => c.title, clock = { now: () => Date.now() } }) {
+function makeMetaCache({ kino: kino2, titleOf: titleOf3 = (c) => c.title, typeOf = (c) => c.kind === "series" ? "series" : "movie", tmdbPictures = false, clock = { now: () => Date.now() } }) {
   const usable = () => {
     try {
       return typeof kino2.meta === "function" && kino2.meta.byTitle === true;
@@ -443,61 +491,109 @@ function makeMetaCache({ kino: kino2, titleOf: titleOf2 = (c) => c.title, clock 
   function known(id) {
     const e = read()[id];
     if (!e) return {};
-    return { ...e.t > 0 ? { tmdb: e.t } : {}, ...e.l && HTTPS2.test(e.l) ? { logo: e.l } : {} };
+    return {
+      ...e.t > 0 ? { tmdb: e.t } : {},
+      ...e.l && HTTPS2.test(e.l) ? { logo: e.l } : {},
+      ...e.p && HTTPS2.test(e.p) ? { poster: e.p } : {},
+      ...e.b && HTTPS2.test(e.b) ? { backdrop: e.b } : {},
+      ...typeof e.o === "string" && e.o ? { overview: e.o } : {}
+    };
   }
+  const asked = (id) => Object.hasOwn(read(), id);
   function dress(cards) {
     return cards.map((c) => {
       const k = known(c.id);
-      return k.tmdb && !(c.ids && c.ids.tmdb) ? { ...c, ids: { ...c.ids || {}, tmdb: k.tmdb } } : c;
+      const poster = tmdbPictures && k.poster ? k.poster : null;
+      if (!k.tmdb && !poster) return c;
+      return { ...c, ...k.tmdb && !(c.ids && c.ids.tmdb) ? { ids: { ...c.ids || {}, tmdb: k.tmdb } } : {}, ...poster ? { poster } : {} };
     });
   }
-  async function fill(cards, budgetMs) {
+  async function fill2(cards, budgetMs) {
     if (!usable()) return 0;
     const b = read();
     const end = clock.now() + budgetMs;
-    let asked = 0;
-    for (const c of cards) {
-      if (clock.now() + CALL_MS > end) break;
-      if (!c || typeof c.id !== "string" || Object.hasOwn(b, c.id) || c.ids && c.ids.tmdb && c.noLogo) continue;
-      const year = c.year !== void 0 ? { year: c.year } : {};
-      try {
-        const a = await kino2.meta({ type: c.kind === "series" ? "series" : "movie", title: titleOf2(c), ...year });
-        b[c.id] = { t: a && a.ids && Number.isInteger(a.ids.tmdb) ? a.ids.tmdb : 0, l: a && typeof a.logo === "string" ? a.logo : "" };
-      } catch (e) {
-        if (e && e.code === "rate_limited") break;
-        continue;
+    let count = 0;
+    let stop = false;
+    const seen = /* @__PURE__ */ new Set();
+    const todo = cards.filter((c) => {
+      if (!c || typeof c.id !== "string" || seen.has(c.id) || Object.hasOwn(b, c.id) || c.ids && c.ids.tmdb && c.noLogo) return false;
+      seen.add(c.id);
+      return true;
+    });
+    let next = 0;
+    const str = (v, max) => typeof v === "string" ? v.slice(0, max) : "";
+    const worker = async () => {
+      while (!stop && next < todo.length && clock.now() < end) {
+        const c = todo[next++];
+        const year = c.year !== void 0 ? { year: c.year } : {};
+        try {
+          const a = await kino2.meta({ type: typeOf(c), title: titleOf3(c), ...year });
+          b[c.id] = {
+            t: a && a.ids && Number.isInteger(a.ids.tmdb) ? a.ids.tmdb : 0,
+            l: str(a && a.logo, 2048),
+            p: str(a && a.poster, 2048),
+            b: str(a && a.backdrop, 2048),
+            o: str(a && a.overview, OVERVIEW_MAX)
+          };
+          count++;
+        } catch (e) {
+          if (e && e.code === "rate_limited") stop = true;
+        }
       }
-      asked++;
-    }
-    if (asked > 0) write();
-    return asked;
+    };
+    await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+    if (count > 0) write();
+    return count;
   }
-  return { known, dress, fill, usable };
+  return { known, asked, dress, fill: fill2, usable, tmdbPictures };
 }
 
-// src/browse/index.js
-var SNAP_TTL_MS = 12 * 3600 * 1e3;
+// src/std/index.js
+var TAB_KEY = "browseTab";
+var SNAP_PREFIX = "browse1:";
+var SNAP_TTL_MS = 7 * 24 * 3600 * 1e3;
 var SNAP_MAX = 20 * 1024;
+var RECENT_KEY = "recent1";
 var RECENT_MAX = 12;
-var HIST_MAX = 24;
-function makeBrowse({ kino: kino2, brand, tabs, loadTab, searchTitles, canPlay = false, titleOf: titleOf2 }) {
-  const TAB_IDS = tabs.map((t2) => t2.id);
-  const TAB_KEY = "browseTab";
-  const SNAP_PREFIX = "browse1:";
-  const RECENT_KEY = "recent1";
-  const HIST_KEY = "searchHist1";
-  const meta = makeMetaCache({ kino: kino2, titleOf: titleOf2 });
-  const enrich = (data) => data ? {
-    slides: data.slides.map((s) => {
+var Q_MAX = 200;
+var META_TICK_MS = 3e3;
+var MAX_META_TICKS = 10;
+var DEFAULT_TABS = [{ id: "inicio", label: "Inicio", labelEn: "Home" }];
+function makeStandardScreen({ kino: kino2, name, nameEn, logo = null, logoAspect = "1:1", needsResolver, hasSettings, tabs, loadTab, homeKey = null, titleOf: titleOf3, typeOf, tmdbPictures = false, imageHeaders = null }) {
+  const cfg = { name, nameEn, logo, logoAspect, imageHeaders, hasSettings: !!hasSettings, tabs: Array.isArray(tabs) && tabs.length > 0 ? tabs : DEFAULT_TABS };
+  const TAB_IDS = cfg.tabs.map((t2) => t2.id);
+  const meta = makeMetaCache({ kino: kino2, titleOf: titleOf3, typeOf, tmdbPictures });
+  function slidesFromMeta(rails) {
+    const out = [];
+    for (const r of rails) {
+      for (const c of r.items) {
+        if (out.length >= MAX_SLIDES) return out;
+        const k = meta.known(c.id);
+        if (!k.backdrop || c.adult === true || out.some((x) => x.id === c.id)) continue;
+        out.push({ id: c.id, ref: c.ref, kind: c.kind, title: c.title, image: k.backdrop, text: slideText(k.overview, c), ...k.logo ? { logo: k.logo } : {} });
+      }
+    }
+    return out;
+  }
+  const enrich = (data) => {
+    if (!data) return data;
+    const own = data.slides.map((s) => {
       const k = meta.known(s.id);
-      return k.logo ? { ...s, logo: k.logo } : s;
-    }),
-    rails: data.rails.map((r) => ({ ...r, items: meta.dress(r.items) }))
-  } : data;
+      const image = tmdbPictures && k.backdrop ? k.backdrop : null;
+      return k.logo || image ? { ...s, ...k.logo ? { logo: k.logo } : {}, ...image ? { image } : {} } : s;
+    });
+    const learned = own.length > 0 ? [] : slidesFromMeta(data.rails);
+    return {
+      // The site's own backdrops, else TMDB's, else the posters: every plugin has a hero.
+      slides: own.length > 0 ? own : learned.length > 0 ? learned : data.posterSlides || [],
+      rails: data.rails.map((r) => ({ ...r, items: meta.dress(r.items) }))
+    };
+  };
+  const metaTicks = /* @__PURE__ */ new Map();
   const memo = /* @__PURE__ */ new Map();
   const log = (...a) => {
     try {
-      kino2.log("[" + brand + "]", ...a);
+      kino2.log("[std]", ...a);
     } catch (_) {
     }
   };
@@ -524,22 +620,30 @@ function makeBrowse({ kino: kino2, brand, tabs, loadTab, searchTitles, canPlay =
   }
   function writeSnap(tab, data) {
     for (let per = 10; per >= 3; per -= 2) {
-      const slim2 = { slides: data.slides, rails: data.rails.map((r) => ({ ...r, items: r.items.slice(0, per) })) };
-      const text = JSON.stringify({ at: Date.now(), data: slim2 });
+      const slim = { slides: data.slides, posterSlides: data.posterSlides || [], rails: data.rails.map((r) => ({ ...r, items: r.items.slice(0, per) })) };
+      const text = JSON.stringify({ at: Date.now(), data: slim });
       if (text.length <= SNAP_MAX) {
         set(SNAP_PREFIX + tab, text, { ttlMs: SNAP_TTL_MS });
         return;
       }
     }
   }
+  function homeSeed(tab) {
+    if (!homeKey || tab !== TAB_IDS[0]) return null;
+    try {
+      const o = JSON.parse(get(homeKey) || "null");
+      return o && Array.isArray(o.rows) && o.rows.length ? tabOf({ rows: o.rows }) : null;
+    } catch (_) {
+      return null;
+    }
+  }
   const stored = () => {
     const t2 = get(TAB_KEY);
     return TAB_IDS.includes(t2) ? t2 : null;
   };
-  const remember = (tab) => set(TAB_KEY, tab);
   function dataOf(tab) {
     if (memo.has(tab)) return memo.get(tab).data;
-    const snap = readSnap(tab);
+    const snap = readSnap(tab) || homeSeed(tab);
     if (snap) {
       memo.set(tab, { data: snap, whole: false });
       return snap;
@@ -556,58 +660,35 @@ function makeBrowse({ kino: kino2, brand, tabs, loadTab, searchTitles, canPlay =
   };
   function notePlayed(ref) {
     try {
-      const key = String(ref || "");
-      if (key === "") return;
+      const key = playedKey(ref);
+      if (key === "" || key.startsWith("x|")) return;
       const keys = readKeys();
       if (keys[0] === key) return;
       set(RECENT_KEY, JSON.stringify([key, ...keys.filter((k) => k !== key)].slice(0, RECENT_MAX)));
     } catch (_) {
     }
   }
-  const slim = (c) => ({ id: c.id, ref: c.ref, title: c.title, kind: c.kind, ...c.poster ? { poster: c.poster } : {} });
-  function readHistory() {
-    try {
-      const a = JSON.parse(get(HIST_KEY) || "[]");
-      return Array.isArray(a) ? a.filter((c) => c && typeof c.id === "string" && typeof c.ref === "string" && typeof c.title === "string").slice(0, HIST_MAX) : [];
-    } catch (_) {
-      return [];
-    }
-  }
-  function rememberFound(cards) {
-    try {
-      const fresh = cards.slice(0, 12).map(slim);
-      const ids = new Set(fresh.map((c) => c.id));
-      set(HIST_KEY, JSON.stringify([...fresh, ...readHistory().filter((c) => !ids.has(c.id))].slice(0, HIST_MAX)));
-    } catch (_) {
-    }
-  }
-  let found = null;
   const tabFromArgs = (route) => {
     const a = route && route.args && typeof route.args === "object" ? route.args : {};
     return TAB_IDS.includes(a.tab) ? a.tab : null;
   };
-  function needed(tab, device) {
-    const order = [tab, ...TAB_IDS.filter((t2) => t2 !== tab)];
-    return order.filter((t2, i) => (i === 0 || device !== "tv") && !(memo.get(t2) && memo.get(t2).whole));
+  function needed(tab) {
+    return memo.get(tab) && memo.get(tab).whole ? [] : [tab];
   }
-  function view(ctx) {
-    const st = ctx.state && typeof ctx.state === "object" ? ctx.state : {};
-    if (ctx.route && ctx.route.name === "settings") return settingsView({ brand });
-    if (ctx.route && ctx.route.name === "search") {
-      const query = typeof st.sq === "string" ? st.sq : "";
-      const items = found && found.q === query ? found.items : null;
-      const status = query === "" ? "idle" : st.sstate === "fail" ? "fail" : items ? "done" : "loading";
-      return searchView({ query, status, items, history: query === "" ? readHistory() : [], device: ctx.device });
-    }
-    const tab = TAB_IDS.includes(st.tab) ? st.tab : tabFromArgs(ctx.route) ?? stored() ?? TAB_IDS[0];
+  function screen2(ctx) {
+    const c = ctx || {};
+    const device = c.device || "phone";
+    if (needsResolver && !(c.installed && c.installed[RESOLVER_REPO])) return gateView(cfg, device);
+    if (c.route && c.route.name === "settings") return settingsView(cfg, device);
+    const st = c.state && typeof c.state === "object" ? c.state : {};
+    const tab = TAB_IDS.includes(st.tab) ? st.tab : tabFromArgs(c.route) ?? stored() ?? TAB_IDS[0];
     const data = enrich(dataOf(tab));
     const loaded = TAB_IDS.map((t2) => memo.get(t2)).filter(Boolean).map((m) => m.data);
     const pending = Array.isArray(st.pending) && st.pending.length > 0;
-    return browseView({ brand, tabs, tab, data, recent: meta.dress(recentOf(readKeys(), loaded)), pending, failed: !!(st.failed && st.failed[tab]), canPlay, device: ctx.device });
+    return browseView(cfg, { tab, data, recent: meta.dress(recentOf(readKeys(), loaded)), pending, failed: !!(st.failed && st.failed[tab]), device });
   }
   async function load(tab) {
-    const page = await loadTab(tab);
-    const data = tabOf(page);
+    const data = tabOf(await loadTab(tab));
     if (data) {
       memo.set(tab, { data, whole: true });
       writeSnap(tab, data);
@@ -618,21 +699,21 @@ function makeBrowse({ kino: kino2, brand, tabs, loadTab, searchTitles, canPlay =
     open({ route, state, device }) {
       const tab = tabFromArgs(route) ?? (TAB_IDS.includes(state.tab) ? state.tab : stored() ?? TAB_IDS[0]);
       for (const t2 of TAB_IDS) dataOf(t2);
-      return { state: { tab, pending: needed(tab, device), failed: null } };
+      return { state: { tab, pending: needed(tab), failed: null } };
     },
     tab({ value, arg, state }) {
       const tab = TAB_IDS.includes(value) ? value : TAB_IDS.includes(arg) ? arg : null;
       if (!tab) return null;
-      remember(tab);
+      set(TAB_KEY, tab);
       dataOf(tab);
       const failed = { ...state.failed || {} };
       delete failed[tab];
       const pending = [tab, ...Array.isArray(state.pending) ? state.pending.filter((t2) => t2 !== tab) : []];
       return { state: { tab, pending: memo.get(tab) && memo.get(tab).whole ? pending.slice(1) : pending, failed } };
     },
-    retry({ state, device }) {
+    retry({ state }) {
       const tab = TAB_IDS.includes(state.tab) ? state.tab : TAB_IDS[0];
-      return { state: { failed: null, pending: [tab, ...needed(tab, device).filter((t2) => t2 !== tab)] } };
+      return { state: { failed: null, pending: [tab] } };
     },
     async tick({ state }) {
       const pending = Array.isArray(state.pending) ? state.pending : [];
@@ -640,9 +721,17 @@ function makeBrowse({ kino: kino2, brand, tabs, loadTab, searchTitles, canPlay =
       const [next, ...rest] = pending;
       const failed = { ...state.failed || {} };
       if (next.startsWith("meta:")) {
-        const m = memo.get(next.slice(5));
-        if (m) await meta.fill([...m.data.slides.map((s) => ({ id: s.id, title: s.title, kind: s.kind })), ...m.data.rails.flatMap((r) => r.items.slice(0, 6).map((c) => ({ id: c.id, title: c.title, kind: c.kind })))], 12e3);
-        return { state: { pending: rest } };
+        const tab = next.slice(5);
+        const m = memo.get(tab);
+        if (!m) return { state: { pending: rest } };
+        const ask = (x) => ({ id: x.id, title: x.title, kind: x.kind, ...x.year !== void 0 ? { year: x.year } : {} });
+        const noOwnSlides = m.data.slides.length === 0;
+        const cards = [...m.data.slides.map(ask), ...m.data.rails.flatMap((r) => r.items.slice(0, noOwnSlides ? MAX_SLIDES * 3 : 6).map(ask))];
+        const count = await meta.fill(cards, META_TICK_MS);
+        const ticks = (metaTicks.get(tab) || 0) + 1;
+        metaTicks.set(tab, ticks);
+        const again = noOwnSlides && count > 0 && ticks < MAX_META_TICKS && slidesFromMeta(m.data.rails).length < MAX_SLIDES && cards.some((c) => !meta.asked(c.id));
+        return { state: { pending: again ? [next, ...rest] : rest } };
       }
       try {
         const ok = await load(next);
@@ -650,58 +739,42 @@ function makeBrowse({ kino: kino2, brand, tabs, loadTab, searchTitles, canPlay =
         else delete failed[next];
         if (ok && meta.usable()) rest.unshift("meta:" + next);
       } catch (e) {
-        log("browse tab", e && e.code || "error");
+        log("tab", e && e.code || "error");
         failed[next] = true;
       }
       return { state: { pending: rest, failed } };
     },
-    // The floating button: straight to the search page, empty and ready for the words.
-    openSearch() {
-      return { route: { push: "search" }, state: { sq: "", sstate: null } };
+    // The words go to Kino's own search, with this plugin as the source; the bar is put back as it was, locally.
+    search({ value, state, device }) {
+      const typed = value && typeof value === "object" ? value.q : value;
+      const raw = typed != null && String(typed).trim() !== "" ? typed : state.inputs && state.inputs.q;
+      const q = String(raw == null ? "" : raw).trim().slice(0, Q_MAX);
+      return q ? { go: { search: { q } }, ui: searchClosedOps(device === "tv" && TAB_IDS.length > 1) } : null;
     },
-    search({ value, route }) {
-      const q = value && typeof value.q === "string" ? value.q.trim().slice(0, 100) : "";
-      if (q === "") return null;
-      const state = { sq: q, sstate: "loading" };
-      return route && route.name === "search" ? { state } : { route: { push: "search" }, state };
-    },
-    // The search page's timer: one search per press, then no timer.
-    async stick({ state }) {
-      const q = typeof state.sq === "string" ? state.sq : "";
-      if (q === "" || state.sstate !== "loading") return null;
-      try {
-        const out = await searchTitles(q);
-        found = { q, items: (Array.isArray(out) ? out : []).slice(0, 60).map(cardOf) };
-        rememberFound(found.items);
-        return { state: { sstate: "done" } };
-      } catch (e) {
-        log("browse search", e && e.code || "error");
-        return { state: { sstate: "fail" } };
-      }
-    },
-    sretry({ state }) {
-      return typeof state.sq === "string" && state.sq !== "" ? { state: { sstate: "loading" } } : null;
-    },
-    // The gear: the plugin's settings are a page of their own, one Back away.
-    go({ arg }) {
-      return arg === "settings" ? { route: { push: "settings" }, state: { fromBrowse: true } } : null;
+    openSettings() {
+      return { route: { push: "settings" }, state: { fromBrowse: true } };
     },
     back({ state, route }) {
       if (route && route.name === "settings" && !state.fromBrowse) return { close: true };
-      return { route: { pop: true }, state: { sq: null, sstate: null } };
+      return { route: { pop: true }, state: { fromBrowse: false } };
     }
   };
-  async function event(ev) {
-    const handler = Object.hasOwn(events, ev.name) ? events[ev.name] : null;
-    return handler ? await handler({ ...ev, state: ev.state || {} }) ?? null : null;
+  async function screenEvent2(ev) {
+    const e = ev || {};
+    const name2 = e.name != null ? e.name : e.event;
+    const handler = typeof name2 === "string" && Object.hasOwn(events, name2) ? events[name2] : null;
+    return handler ? await handler({ ...e, state: e.state || {} }) ?? null : null;
   }
-  return { view, event, notePlayed };
+  return { screen: screen2, screenEvent: screenEvent2, notePlayed };
 }
+
+// src/logo.js
+var LOGO = "data:image/png;base64,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";
+var LOGO_ASPECT = "1:1";
 
 // src/resolve-door.js
 var HLS_MIME = "application/vnd.apple.mpegurl";
 var RESOLVER_ALIAS = "resolver";
-var RESOLVER_REPO = "xuper-plugin/kino-plugin-kino-resolver";
 var CAPTURE_MS = 2e4;
 function headersOf(s) {
   const out = {};
@@ -1033,7 +1106,7 @@ function parseCopyRef(ref) {
   m = /^cp:ep:(\d+):(\d+):(\d+):(lat|esp|sub):([a-z]+)$/.exec(ref);
   return m ? { what: { kind: "tv", tmdbId: m[1], season: Number(m[2]), episode: Number(m[3]) }, lang: m[4], server: m[5] } : null;
 }
-async function titleOf(what) {
+async function titleOf2(what) {
   const tv = what.kind === "tv";
   const key = (tv ? "show:" : "movie:") + what.tmdbId;
   let info = null;
@@ -1105,14 +1178,14 @@ async function resolve(ref) {
   if (ref.startsWith("cp:")) {
     const want = parseCopyRef(ref);
     if (!want) throw kino.error("not_found", "bad copy ref");
-    const copy = (await listCopies(await titleOf(want.what), { req })).find((c) => c.lang === want.lang && c.server === want.server);
+    const copy = (await listCopies(await titleOf2(want.what), { req })).find((c) => c.lang === want.lang && c.server === want.server);
     const stream = copy ? await open(copy, budget) : null;
     if (!stream) throw kino.error("not_found", "copy not available: " + want.lang + "/" + want.server, { userMessage: t("noStreams") });
     return stream;
   }
   const what = parseRef(ref);
   if (!what) throw kino.error("not_found", "unknown ref: " + ref.slice(0, 40));
-  const copies = ordered(await listCopies(await titleOf(what), { req }));
+  const copies = ordered(await listCopies(await titleOf2(what), { req }));
   if (!copies.length) throw kino.error("not_found", "no copies for tmdb " + what.tmdbId, { userMessage: t("noStreams") });
   let main = null;
   let tried = 0;
@@ -1133,46 +1206,26 @@ async function action(key) {
     return { message: t("cacheCleared") };
   }
 }
-var SUPPORT_URL = "https://ko-fi.com/xuperplugins";
-function supportNode(device) {
-  if (device === "tv") return { type: "QrImage", value: SUPPORT_URL, size: "large", labelText: "Si te gusta mi trabajo, escan\xE9alo y ap\xF3yame", labelTextEn: "If you like my work, scan it and support me" };
-  return { type: "ElevatedButton", key: "donate", icon: "heart", labelText: "Si te gusta mi trabajo, ap\xF3yame", labelTextEn: "If you like my work, support me", onPressed: { go: { url: { href: SUPPORT_URL } } } };
-}
-function installGateView(device) {
-  return {
-    type: "Scaffold",
-    key: "seriesmetro-install",
-    body: { type: "SingleChildScrollView", key: "installScroll", children: [
-      { type: "Column", padding: 24, gap: 16, crossAxisAlignment: "stretch", children: [
-        { type: "Text", text: "Necesitas el motor de reproducci\xF3n", textEn: "You need the playback engine", style: "h3" },
-        { type: "Text", color: "secondary", text: "SeriesMetro reproduce a trav\xE9s de Kino Resolver (gratis). Inst\xE1lalo una vez y sirve para este y para otros plugins de sitios.", textEn: "SeriesMetro plays through Kino Resolver (free). Install it once and it works here and in other site plugins." },
-        { type: "ElevatedButton", key: "installResolver", labelText: "Instalar Kino Resolver", labelTextEn: "Install Kino Resolver", onPressed: { go: { installPlugin: { repo: RESOLVER_REPO } } } },
-        supportNode(device)
-      ] }
-    ] }
-  };
-}
-var SCREEN_TABS = [
-  { id: "inicio", es: "Pel\xEDculas y series", en: "Movies & series" }
-];
-var browseInstance = null;
-var browseScreen = () => browseInstance ?? (browseInstance = makeBrowse({
+var std = null;
+var standard = () => std ?? (std = makeStandardScreen({
   kino,
-  brand: "SeriesMetro",
-  tabs: SCREEN_TABS,
-  loadTab: async () => ({ rows: await home() }),
-  searchTitles: (q) => search({ q }),
-  canPlay: false
+  name: "SeriesMetro",
+  logo: LOGO,
+  logoAspect: LOGO_ASPECT,
+  needsResolver: true,
+  hasSettings: true,
+  tabs: [
+    { id: "inicio", label: "Pel\xEDculas y series", labelEn: "Movies & series" }
+  ],
+  loadTab: async () => ({ rows: await home() })
 }));
 async function screen(ctx) {
   await null;
-  const c = ctx && typeof ctx === "object" ? ctx : {};
-  if (!(c.installed && c.installed[RESOLVER_REPO])) return installGateView(c.device);
-  return browseScreen().view(c);
+  return standard().screen(ctx && typeof ctx === "object" ? ctx : {});
 }
 async function screenEvent(ev) {
   await null;
-  return browseScreen().event(ev && typeof ev === "object" ? ev : {});
+  return standard().screenEvent(ev && typeof ev === "object" ? ev : {});
 }
 export {
   action,
