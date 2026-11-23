@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.2
+
+- Back closes the search box (the screen declares onBack while searching) instead of the whole screen (std 1.6.1)
+
 ## 1.3.1
 
 - Back closes the search box instead of the screen; a tab Kino cut short offers Retry instead of skeletons; fewer TMDB lookups per tick (std 1.6.0)
