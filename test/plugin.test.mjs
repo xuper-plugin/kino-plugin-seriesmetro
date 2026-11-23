@@ -96,7 +96,7 @@ test("the manifest is valid for Kino, declares only the site and Fastream, and u
   assert.deepEqual(manifest.hosts, ["www3.seriesmetro.net", "fastream.to"]);
   assert.equal(manifest.streamHosts, "any");
   assert.ok(manifest.capabilities.includes("download"));
-  assert.ok(!manifest.fetchHosts, "no fetch to any host: only the site and the players");
+  assert.equal(manifest.fetchHosts, "any", "the 2 KB peek reaches whatever CDN a player hands back, without a dialog");
   assert.equal(manifest.apiVersion, 20);
   assert.equal(manifest.browser, true, "the hidden browser takes a player the resolver can't open inline");
   assert.ok(manifest.capabilities.includes("screen") && manifest.screen && manifest.screen.menuOpens === "screen");

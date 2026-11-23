@@ -1,7 +1,7 @@
 {
   "id": "seriesmetro",
   "name": "SeriesMetro",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "apiVersion": 20,
   "entry": "plugin.js",
   "icon": "icon.png",
@@ -12,6 +12,7 @@
     "www3.seriesmetro.net",
     "fastream.to"
   ],
+  "fetchHosts": "any",
   "streamHosts": "any",
   "capabilities": [
     "search",
