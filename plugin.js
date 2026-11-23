@@ -749,7 +749,8 @@ async function resolveViaHelper(embedUrl, kino2, referer, allowCapture = true) {
   let streams = res && Array.isArray(res.streams) ? res.streams.slice() : [];
   const subtitles = res && Array.isArray(res.subtitles) ? res.subtitles.filter((x) => x && x.lang && x.url) : [];
   let captured = false;
-  if (!streams.length && (typeof allowCapture === "function" ? allowCapture() : allowCapture)) {
+  const dead = !streams.length && res && res.error === "dead";
+  if (!streams.length && !dead && (typeof allowCapture === "function" ? allowCapture() : allowCapture)) {
     streams = await captureStreams(kino2, embedUrl, referer);
     captured = streams.length > 0;
   }

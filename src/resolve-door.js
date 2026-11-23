@@ -58,7 +58,9 @@ export async function resolveViaHelper(embedUrl, kino, referer, allowCapture = t
   let captured = false;
   // `allowCapture` is a boolean or a function asked right before a capture would start (so a caller can spend its
   // capture budget on the attempt, and refuse when too little time is left for a 20 s page).
-  if (!streams.length && (typeof allowCapture === "function" ? allowCapture() : allowCapture)) { streams = await captureStreams(kino, embedUrl, referer); captured = streams.length > 0; }
+  // A player the resolver read as gone (deleted, blocked for copyright) has nothing a 20 s capture could find.
+  const dead = !streams.length && res && res.error === "dead";
+  if (!streams.length && !dead && (typeof allowCapture === "function" ? allowCapture() : allowCapture)) { streams = await captureStreams(kino, embedUrl, referer); captured = streams.length > 0; }
   const s = pickBest(streams);
   if (!s) return null;
   const headers = headersOf(s);
