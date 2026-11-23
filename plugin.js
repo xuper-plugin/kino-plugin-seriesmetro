@@ -1079,7 +1079,7 @@ async function answers(stream) {
     if (!r.ok) return false;
     return !/\.m3u8(\?|$)/i.test(stream.url) || /^\s*#EXTM3U/.test(r.text() || "");
   } catch (e) {
-    return !!(e && (e.code === "host_not_allowed" || e.code === "too_large"));
+    return !!(e && (e.code === "host_not_allowed" || e.code === "too_large" || e.code === "timeout"));
   }
 }
 async function open(c, budget) {

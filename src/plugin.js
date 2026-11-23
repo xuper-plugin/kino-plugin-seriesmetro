@@ -367,7 +367,9 @@ async function answers(stream) {
     if (!r.ok) return false;
     return !/\.m3u8(\?|$)/i.test(stream.url) || /^\s*#EXTM3U/.test(r.text() || "");
   } catch (e) {
-    return !!(e && (e.code === "host_not_allowed" || e.code === "too_large"));
+    // A timeout is a slow CDN, not a dead one (a Redmi took 4.3 s for the TLS handshake of acek-cdn.com, then played): the
+    // player gets it. Only an answer that says "dead" (an error status, a non-playlist) passes the stream over.
+    return !!(e && (e.code === "host_not_allowed" || e.code === "too_large" || e.code === "timeout"));
   }
 }
 
