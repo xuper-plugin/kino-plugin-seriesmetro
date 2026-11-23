@@ -1,7 +1,7 @@
 {
   "id": "seriesmetro",
   "name": "SeriesMetro",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "apiVersion": 30,
   "entry": "plugin.js",
   "icon": "icon.png",
@@ -95,7 +95,7 @@
       "label": "Abrir SeriesMetro",
       "labelEn": "Open SeriesMetro"
     },
-    "settingsIn": "screen"
+    "settingsIn": "both"
   },
   "consumes": {
     "resolver": {
