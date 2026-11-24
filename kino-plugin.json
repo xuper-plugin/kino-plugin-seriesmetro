@@ -1,7 +1,7 @@
 {
   "id": "seriesmetro",
   "name": "SeriesMetro",
-  "version": "1.3.6",
+  "version": "1.3.7",
   "apiVersion": 30,
   "entry": "plugin.js",
   "icon": "icon.png",
@@ -135,6 +135,6 @@
   },
   "signature": {
     "authorKey": "6693946bd5c56196960959c4b9665fad5094374bcb85ddb282f8bf762c835263",
-    "value": "4a11c5691148639f66d78a83c8c86b93713e156c470c71c093977046cdc931da32ab2327a492ce9f7cfe555e2bffccb19168cdaacac0db82c3acd1019c453001"
+    "value": "d6c61ab4e8c118171ec9a425283f11a7e9f9935c7d45a95f7158a265366167d9579874e6502553ff88e010e6301b8a272609d7d4d6714742c7cd63edc63e130d"
   }
 }

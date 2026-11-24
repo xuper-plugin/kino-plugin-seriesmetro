@@ -373,3 +373,15 @@ test("a title whose plain slug belongs to another page is also looked up with th
     ["el-corazon-de-la-bestia", "heart-of-the-beast", "el-corazon-de-la-bestia-2026", "heart-of-the-beast-2026"]);
   assert.deepEqual(pageSlugs({ titles: { esMX: "Coco" } }), ["coco"], "no year, no suffix");
 });
+
+test("every genre tile has an https TMDB art URL; an unknown genre has none", async () => {
+  const movie = [28, 12, 16, 35, 80, 99, 18, 10751, 14, 36, 27, 10402];
+  const tv = [10759, 16, 35, 80, 99, 18, 10751, 10762];
+  tmdbImpl = async (path) => ({ genres: (path === "/genre/movie/list" ? movie : tv).map((id) => ({ id, name: "G" + id })) });
+  const cats = await plugin.categories();
+  assert.equal(cats.length, 20);
+  for (const c of cats) assert.match(c.art, /^https:\/\/image\.tmdb\.org\/t\/p\/w780\/[A-Za-z0-9]+\.jpg$/, c.id);
+  tmdbImpl = async () => ({ genres: [{ id: 999999, name: "Nuevo" }] });
+  const odd = await plugin.categories();
+  assert.equal(odd[0].art, undefined);
+});
