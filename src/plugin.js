@@ -151,14 +151,19 @@ const HOME_ROWS = [
   { id: "g-drama", title: "gDrama", genre: "peliculas", ref: "genre:movie:18", kind: "movie", path: "/discover/movie", params: { with_genres: 18 } },
   { id: "kids", title: "kids", genre: "infantil", ref: "genre:movie:10751", kind: "movie", path: "/discover/movie", params: { with_genres: 10751 } },
   { id: "docs", title: "docs", genre: "documentales", ref: "genre:movie:99", kind: "movie", path: "/discover/movie", params: { with_genres: 99 } },
-  { id: "anime", title: "anime", genre: "anime", ref: "anime:tv", kind: "tv", path: "/discover/tv", params: { with_genres: 16, with_origin_country: "JP" } },
+  { id: "anime", title: "anime", genre: "anime", ref: "anime:tv", kind: "tv", path: "/discover/tv", airing: true, params: { with_genres: 16, with_origin_country: "JP" } },
 ];
 
 // A discover list sorted by popularity is full of titles nobody has voted on: ask for some votes.
 const DISCOVER = { sort_by: "popularity.desc", "vote_count.gte": 200 };
 
+const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10);
+
+/** What is new in anime: the Japanese animation with an episode aired in the last 3 weeks, the newest series first (no vote floor: a new show has none yet). */
+const airingParams = (extra) => ({ ...extra, sort_by: "first_air_date.desc", "air_date.gte": isoDay(Date.now() - 21 * DAY_MS), "air_date.lte": isoDay(Date.now()) });
+
 async function homeRow(row) {
-  const res = await tmdb(row.path, { ...(row.path.startsWith("/discover") ? DISCOVER : {}), ...(row.params || {}) });
+  const res = await tmdb(row.path, row.airing ? airingParams(row.params) : { ...(row.path.startsWith("/discover") ? DISCOVER : {}), ...(row.params || {}) });
   // a row of posters: what has none looks broken
   const items = (res?.results || []).filter((r) => r.poster_path).slice(0, 20).map((r) => itemFromTmdb(r, row.kind));
   return items.length ? { id: row.id, title: t(row.title), genre: row.genre, ref: row.ref, items } : null;
@@ -223,10 +228,10 @@ export async function browse(ref, cursor) {
     kind = parts[1];
     path = `/${kind}/popular`;
   } else if (parts[0] === "anime" && parts[1] === "tv") {
-    // Japanese animation: TMDB has no anime flag, but animation from Japan is what the Home row means
+    // Japanese animation airing now (TMDB has no anime flag, but animation from Japan is what the row means)
     kind = "tv";
     path = "/discover/tv";
-    params = { ...DISCOVER, with_genres: 16, with_origin_country: "JP", page };
+    params = { ...airingParams({ with_genres: 16, with_origin_country: "JP" }), page };
   } else if (parts[0] === "genre" && (parts[1] === "movie" || parts[1] === "tv") && /^\d+$/.test(parts[2] || "")) {
     kind = parts[1];
     path = `/discover/${kind}`;

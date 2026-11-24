@@ -281,6 +281,20 @@ test("the genre rows are discover lists with some votes behind them", async () =
   assert.equal(action.params["vote_count.gte"], 200);
 });
 
+test("the anime row is what is new: Japanese animation airing in the last weeks, newest first, and its Ver más asks the same", async () => {
+  tmdbImpl = async () => ({ results: titles(5), page: 1, total_pages: 1 });
+  const rows = await plugin.home();
+  assert.equal(rows.find((r) => r.id === "anime").genre, "anime");
+  for (const call of [tmdbCalls.find((c) => c.params?.with_genres === 16), (await plugin.browse("anime:tv", null), tmdbCalls[tmdbCalls.length - 1])]) {
+    assert.equal(call.path, "/discover/tv");
+    assert.equal(call.params.with_origin_country, "JP");
+    assert.equal(call.params.sort_by, "first_air_date.desc");
+    assert.match(call.params["air_date.gte"], /^\d{4}-\d{2}-\d{2}$/);
+    assert.ok(call.params["air_date.gte"] < call.params["air_date.lte"]);
+    assert.equal(call.params["vote_count.gte"], undefined);
+  }
+});
+
 test("a row that fails or has no posters is left out, the others are still shown", async () => {
   tmdbImpl = async (path) => {
     if (path === "/movie/upcoming") throw new Error("boom");

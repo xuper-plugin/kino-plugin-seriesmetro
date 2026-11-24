@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.8
+
+- The Anime row shows what is new: Japanese animation airing in the last weeks, newest series first (it was the all-time popular)
+
 ## 1.3.7
 
 - Categorías: every genre tile now shows a picture (a well-known TMDB backdrop per genre, no extra requests)
