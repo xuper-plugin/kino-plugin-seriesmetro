@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.9
+
+- The catalog door also lists a series' episodes, for the author's other plugins (std 1.10.0)
+
 ## 1.3.8
 
 - The Anime row shows what is new: Japanese animation airing in the last weeks, newest series first (it was the all-time popular)
