@@ -2,7 +2,7 @@
 
 ## 1.3.9
 
-- The catalog door also lists a series' episodes, for the author's other plugins (std 1.10.0)
+- The catalog door also lists a series' episodes, for the author's other plugins (std 1.10.1)
 
 ## 1.3.8
 
